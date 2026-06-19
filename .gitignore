@@ -1,0 +1,12 @@
+*
+
+!.gitignore
+!README.md
+!DEPLOYMENT.md
+!streamlit_app.py
+!app_scenario.py
+!requirements.txt
+!.streamlit/
+!.streamlit/config.toml
+!yusho/
+!yusho/*.py
