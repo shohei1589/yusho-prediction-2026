@@ -326,6 +326,8 @@ def _reset_scenario_state(prefix: str, scenario_input: pd.DataFrame) -> None:
 
 
 def _render_scenario_controls(prefix: str, scenario_input: pd.DataFrame) -> None:
+    _render_mobile_scenario_table(prefix, scenario_input)
+
     st.markdown("<div class='scenario-grid'>", unsafe_allow_html=True)
     header = st.columns([1.35, 1.12, 1.12, 1.12, 0.82, 0.98])
     for col, label in zip(header, ["球団", "勝", "敗", "分", "現在勝率", "今後勝率"]):
@@ -358,6 +360,28 @@ def _render_scenario_controls(prefix: str, scenario_input: pd.DataFrame) -> None
             )
         st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _render_mobile_scenario_table(prefix: str, scenario_input: pd.DataFrame) -> None:
+    rows: list[dict[str, str]] = []
+    for _, row in scenario_input.iterrows():
+        team = str(row["Team"])
+        wins = int(st.session_state[_scenario_widget_key(prefix, team, "wins")])
+        losses = int(st.session_state[_scenario_widget_key(prefix, team, "losses")])
+        ties = int(st.session_state[_scenario_widget_key(prefix, team, "ties")])
+        current_rate = _win_rate(wins, losses)
+        future_rate = str(st.session_state[_scenario_widget_key(prefix, team, "rate")])
+        rows.append(
+            {
+                "球団": str(row["球団"]),
+                "勝敗分": f"{wins}-{losses}-{ties}",
+                "現在": _rate_display(current_rate),
+                "今後": future_rate,
+            }
+        )
+    frame = pd.DataFrame(rows)
+    html = frame.to_html(index=False, escape=False, classes="mobile-table")
+    st.markdown(f"<div class='mobile-scenario-table'>{html}</div>", unsafe_allow_html=True)
 
 
 def _stepper(prefix: str, team: str, field: str, label: str) -> None:
@@ -540,8 +564,8 @@ def _champion_date_chart(
 
 
 def _gray_gradient_colors(values: pd.Series, dark_mode: bool) -> list[str]:
-    start = "#aebdca" if not dark_mode else "#475569"
-    end = "#2563eb" if not dark_mode else "#38bdf8"
+    start = "#d8dee7" if not dark_mode else "#3a4657"
+    end = "#687386" if not dark_mode else "#9aa8bb"
     max_value = float(values.max()) if not values.empty else 0.0
     if max_value <= 0:
         return [start for _ in values]
@@ -800,6 +824,9 @@ div[data-testid="stDataFrame"] {{
   overflow: hidden;
   margin-bottom: 1rem;
 }}
+.mobile-scenario-table {{
+  display: none;
+}}
 .styled-table {{
   width: 100%;
   border-collapse: collapse;
@@ -1010,39 +1037,58 @@ button[kind="primary"] {{
     padding: 3px 4px 1px;
   }}
   .scenario-grid {{
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+    display: none;
   }}
-  div[data-testid="stExpander"] div[data-testid="stExpanderDetails"] {{
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }}
+  .scenario-row,
   div[data-testid="stHorizontalBlock"]:has(.scenario-header),
   div[data-testid="stHorizontalBlock"]:has(.scenario-team) {{
-    flex-direction: row !important;
-    flex-wrap: nowrap !important;
-    align-items: center !important;
-    min-width: 720px;
+    display: none !important;
   }}
-  div[data-testid="stHorizontalBlock"]:has(button):has(div[data-testid="stNumberInput"]) {{
-    flex-direction: row !important;
-    flex-wrap: nowrap !important;
-    gap: 0.24rem !important;
-    min-width: 124px;
+  .mobile-scenario-table {{
+    display: block;
+    width: 100%;
+    border: 1px solid {border};
+    border-radius: 8px;
+    overflow: hidden;
+    background: {surface};
+    box-shadow: 0 8px 18px rgba(32, 50, 70, 0.08);
   }}
-  div[data-testid="stHorizontalBlock"]:has(button):has(div[data-testid="stNumberInput"]) > div[data-testid="column"]:first-child,
-  div[data-testid="stHorizontalBlock"]:has(button):has(div[data-testid="stNumberInput"]) > div[data-testid="column"]:last-child {{
-    flex: 0 0 30px !important;
-    width: 30px !important;
-    min-width: 30px !important;
+  .mobile-table {{
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    font-size: 12px;
+    color: {text};
   }}
-  div[data-testid="stHorizontalBlock"]:has(button):has(div[data-testid="stNumberInput"]) > div[data-testid="column"]:nth-child(2) {{
-    flex: 0 0 58px !important;
-    width: 58px !important;
-    min-width: 58px !important;
+  .mobile-table thead tr {{
+    background: {surface_soft};
   }}
-  .scenario-grid > div[data-testid="stHorizontalBlock"] {{
-    min-width: 720px;
+  .mobile-table th,
+  .mobile-table td {{
+    padding: 0.48rem 0.34rem;
+    border-bottom: 1px solid {border};
+    text-align: center;
+    font-weight: 800;
+    white-space: nowrap;
+  }}
+  .mobile-table th:first-child,
+  .mobile-table td:first-child {{
+    width: 31%;
+    text-align: left;
+    padding-left: 0.55rem;
+  }}
+  .mobile-table th:nth-child(2),
+  .mobile-table td:nth-child(2) {{
+    width: 27%;
+  }}
+  .mobile-table th:nth-child(3),
+  .mobile-table td:nth-child(3),
+  .mobile-table th:nth-child(4),
+  .mobile-table td:nth-child(4) {{
+    width: 21%;
+  }}
+  .mobile-table tr:last-child td {{
+    border-bottom: 0;
   }}
 }}
 @media (max-width: 640px) {{
@@ -1062,8 +1108,12 @@ button[kind="primary"] {{
   .styled-table {{
     min-width: 360px;
   }}
-  .scenario-grid > div[data-testid="stHorizontalBlock"] {{
-    min-width: 680px;
+  .mobile-table {{
+    font-size: 11.5px;
+  }}
+  .mobile-table th,
+  .mobile-table td {{
+    padding: 0.44rem 0.24rem;
   }}
 }}
 </style>
