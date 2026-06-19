@@ -22,6 +22,20 @@ LEAGUE_LABELS = {
     CENTRAL: "セ・リーグ",
 }
 LEAGUE_BY_LABEL = {label: code for code, label in LEAGUE_LABELS.items()}
+TEAM_ACCENT_COLORS = {
+    "G": "#f97316",
+    "T": "#facc15",
+    "DB": "#0079c1",
+    "C": "#d71920",
+    "D": "#004b9b",
+    "S": "#22c55e",
+    "H": "#facc15",
+    "F": "#2563eb",
+    "M": "#ef4444",
+    "Bs": "#8b5cf6",
+    "E": "#991b1b",
+    "L": "#1d4ed8",
+}
 
 
 st.set_page_config(page_title="2026 優勝予測", layout="wide")
@@ -227,7 +241,7 @@ def _render_summary(
         left, right = st.columns([2, 1])
         with left:
             st.plotly_chart(
-                _champion_date_chart(result, team_name, dark_mode),
+                _champion_date_chart(result, target_team, team_name, dark_mode),
                 use_container_width=True,
             )
         with right:
@@ -451,7 +465,12 @@ def _render_table(frame: pd.DataFrame) -> None:
     st.markdown(f"<div class='table-card'>{html}</div>", unsafe_allow_html=True)
 
 
-def _champion_date_chart(result: SimulationResult, team_name: str, dark_mode: bool):
+def _champion_date_chart(
+    result: SimulationResult,
+    target_team: str,
+    team_name: str,
+    dark_mode: bool,
+):
     frame = result.champion_dates.copy()
     if frame.empty:
         return px.bar(title=f"{team_name}の優勝確定日は記録されませんでした")
@@ -466,10 +485,14 @@ def _champion_date_chart(result: SimulationResult, team_name: str, dark_mode: bo
     frame["ProbabilityPct"] = frame["Probability"] * 100
     frame["DateLabel"] = frame["Date"].dt.month.astype(str) + "/" + frame["Date"].dt.day.astype(str)
     category_order = frame["DateLabel"].tolist()
-    top_dates = set(frame.nlargest(3, "ProbabilityPct")["Date"])
-    top_color = "#f97316" if dark_mode else "#d64b3c"
-    other_color = "#3b82f6" if dark_mode else "#2f6f8f"
-    frame["BarColor"] = frame["Date"].apply(lambda value: top_color if value in top_dates else other_color)
+    positive_frame = frame[frame["ProbabilityPct"] > 0]
+    top_dates = set(positive_frame.nlargest(3, "ProbabilityPct")["Date"])
+    top_color = TEAM_ACCENT_COLORS.get(target_team, "#2563eb")
+    gray_colors = _gray_gradient_colors(frame["ProbabilityPct"], dark_mode)
+    frame["BarColor"] = [
+        top_color if date_value in top_dates else gray_color
+        for date_value, gray_color in zip(frame["Date"], gray_colors)
+    ]
 
     fig = go.Figure(
         data=[
@@ -501,6 +524,34 @@ def _champion_date_chart(result: SimulationResult, team_name: str, dark_mode: bo
         yaxis={"gridcolor": "#334155" if dark_mode else "#e5eaf0", "title": "確率 (%)"},
     )
     return fig
+
+
+def _gray_gradient_colors(values: pd.Series, dark_mode: bool) -> list[str]:
+    start = "#e8edf3" if not dark_mode else "#263244"
+    end = "#7b8796" if not dark_mode else "#94a3b8"
+    max_value = float(values.max()) if not values.empty else 0.0
+    if max_value <= 0:
+        return [start for _ in values]
+    return [_mix_color(start, end, min(float(value) / max_value, 1.0)) for value in values]
+
+
+def _mix_color(start_hex: str, end_hex: str, ratio: float) -> str:
+    start_rgb = _hex_to_rgb(start_hex)
+    end_rgb = _hex_to_rgb(end_hex)
+    rgb = tuple(
+        round(start + (end - start) * ratio)
+        for start, end in zip(start_rgb, end_rgb)
+    )
+    return _rgb_to_hex(rgb)
+
+
+def _hex_to_rgb(value: str) -> tuple[int, int, int]:
+    value = value.lstrip("#")
+    return tuple(int(value[index:index + 2], 16) for index in (0, 2, 4))
+
+
+def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
+    return "#" + "".join(f"{component:02x}" for component in rgb)
 
 
 def _format_standings(standings: pd.DataFrame, league: str) -> pd.DataFrame:
