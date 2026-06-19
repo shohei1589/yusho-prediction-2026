@@ -494,7 +494,6 @@ def _champion_date_chart(
         for date_value, gray_color in zip(frame["Date"], gray_colors)
     ]
     y_max = max(0.5, float(frame["ProbabilityPct"].max()) * 1.18)
-    zero_frame = frame[frame["ProbabilityPct"] <= 0]
 
     fig = go.Figure(
         data=[
@@ -509,22 +508,6 @@ def _champion_date_chart(
             )
         ]
     )
-    if not zero_frame.empty:
-        fig.add_trace(
-            go.Scatter(
-                x=zero_frame["DateLabel"],
-                y=[0] * len(zero_frame),
-                mode="markers",
-                marker={
-                    "size": 7,
-                    "color": "#8aa0b8" if not dark_mode else "#64748b",
-                    "line": {"width": 1, "color": "#ffffff" if not dark_mode else "#0f172a"},
-                },
-                hovertemplate="%{x}<br>0.0%<extra></extra>",
-                showlegend=False,
-                cliponaxis=False,
-            )
-        )
     fig.update_layout(
         title=f"{team_name} 優勝確定日分布",
         height=440,
@@ -1029,6 +1012,34 @@ button[kind="primary"] {{
   .scenario-grid {{
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+  }}
+  div[data-testid="stExpander"] div[data-testid="stExpanderDetails"] {{
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }}
+  div[data-testid="stHorizontalBlock"]:has(.scenario-header),
+  div[data-testid="stHorizontalBlock"]:has(.scenario-team) {{
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    min-width: 720px;
+  }}
+  div[data-testid="stHorizontalBlock"]:has(button):has(div[data-testid="stNumberInput"]) {{
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    gap: 0.24rem !important;
+    min-width: 124px;
+  }}
+  div[data-testid="stHorizontalBlock"]:has(button):has(div[data-testid="stNumberInput"]) > div[data-testid="column"]:first-child,
+  div[data-testid="stHorizontalBlock"]:has(button):has(div[data-testid="stNumberInput"]) > div[data-testid="column"]:last-child {{
+    flex: 0 0 30px !important;
+    width: 30px !important;
+    min-width: 30px !important;
+  }}
+  div[data-testid="stHorizontalBlock"]:has(button):has(div[data-testid="stNumberInput"]) > div[data-testid="column"]:nth-child(2) {{
+    flex: 0 0 58px !important;
+    width: 58px !important;
+    min-width: 58px !important;
   }}
   .scenario-grid > div[data-testid="stHorizontalBlock"] {{
     min-width: 720px;
