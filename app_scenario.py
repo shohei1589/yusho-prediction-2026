@@ -493,6 +493,8 @@ def _champion_date_chart(
         top_color if date_value in top_dates else gray_color
         for date_value, gray_color in zip(frame["Date"], gray_colors)
     ]
+    y_max = max(0.5, float(frame["ProbabilityPct"].max()) * 1.18)
+    zero_frame = frame[frame["ProbabilityPct"] <= 0]
 
     fig = go.Figure(
         data=[
@@ -500,15 +502,35 @@ def _champion_date_chart(
                 x=frame["DateLabel"],
                 y=frame["ProbabilityPct"],
                 marker_color=frame["BarColor"],
+                marker_line_color="#ffffff" if not dark_mode else "#0f172a",
+                marker_line_width=0.8,
+                opacity=0.96,
                 hovertemplate="%{x}<br>%{y:.1f}%<extra></extra>",
             )
         ]
     )
+    if not zero_frame.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=zero_frame["DateLabel"],
+                y=[0] * len(zero_frame),
+                mode="markers",
+                marker={
+                    "size": 7,
+                    "color": "#8aa0b8" if not dark_mode else "#64748b",
+                    "line": {"width": 1, "color": "#ffffff" if not dark_mode else "#0f172a"},
+                },
+                hovertemplate="%{x}<br>0.0%<extra></extra>",
+                showlegend=False,
+                cliponaxis=False,
+            )
+        )
     fig.update_layout(
         title=f"{team_name} 優勝確定日分布",
         height=440,
         margin={"l": 10, "r": 10, "t": 60, "b": 10},
         showlegend=False,
+        bargap=0.22,
         plot_bgcolor="#182338" if dark_mode else "#ffffff",
         paper_bgcolor="#182338" if dark_mode else "#ffffff",
         font={"color": "#f8fafc" if dark_mode else "#172033"},
@@ -519,20 +541,31 @@ def _champion_date_chart(
             "tickmode": "array",
             "tickvals": category_order,
             "ticktext": category_order,
+            "tickangle": -35,
+            "automargin": True,
             "title": "日付",
         },
-        yaxis={"gridcolor": "#334155" if dark_mode else "#e5eaf0", "title": "確率 (%)"},
+        yaxis={
+            "gridcolor": "#334155" if dark_mode else "#e5eaf0",
+            "range": [0, y_max],
+            "title": "確率 (%)",
+            "zeroline": True,
+            "zerolinecolor": "#cbd5e1" if not dark_mode else "#475569",
+        },
     )
     return fig
 
 
 def _gray_gradient_colors(values: pd.Series, dark_mode: bool) -> list[str]:
-    start = "#e8edf3" if not dark_mode else "#263244"
-    end = "#7b8796" if not dark_mode else "#94a3b8"
+    start = "#aebdca" if not dark_mode else "#475569"
+    end = "#2563eb" if not dark_mode else "#38bdf8"
     max_value = float(values.max()) if not values.empty else 0.0
     if max_value <= 0:
         return [start for _ in values]
-    return [_mix_color(start, end, min(float(value) / max_value, 1.0)) for value in values]
+    return [
+        _mix_color(start, end, min(float(value) / max_value, 1.0) ** 0.55)
+        for value in values
+    ]
 
 
 def _mix_color(start_hex: str, end_hex: str, ratio: float) -> str:
@@ -911,6 +944,116 @@ button[kind="primary"] {{
   border: 0;
   box-shadow: {shadow};
   font-weight: 900;
+}}
+@media (max-width: 900px) {{
+  .block-container {{
+    padding: 1rem 0.7rem 2rem;
+    max-width: 100%;
+  }}
+  .app-title {{
+    font-size: 1.85rem;
+    line-height: 1.18;
+    margin-bottom: 0.25rem;
+  }}
+  .app-caption {{
+    font-size: 0.8rem;
+    margin-bottom: 1rem;
+  }}
+  .mode-control-label {{
+    margin-top: 0.1rem;
+    text-align: left;
+  }}
+  div[data-testid="stToggle"] {{
+    justify-content: flex-start;
+  }}
+  div[data-testid="stMetric"] {{
+    padding: 8px 10px;
+  }}
+  div[data-testid="stMetric"] label {{
+    font-size: 0.72rem;
+  }}
+  div[data-testid="stMetricValue"] {{
+    font-size: 1.2rem;
+  }}
+  div[data-testid="stExpander"] details summary p {{
+    font-size: 16px;
+  }}
+  .stTabs [data-baseweb="tab-list"] {{
+    gap: 8px;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: thin;
+  }}
+  .stTabs [data-baseweb="tab"] {{
+    min-width: max-content;
+    font-size: 0.86rem;
+    padding-left: 4px;
+    padding-right: 4px;
+  }}
+  .table-card {{
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }}
+  .styled-table {{
+    min-width: 420px;
+    font-size: 0.82rem;
+  }}
+  .styled-table th,
+  .styled-table td {{
+    padding: 0.48rem 0.55rem;
+  }}
+  div[data-testid="stPlotlyChart"] {{
+    border-radius: 6px;
+  }}
+  button[kind="secondary"] {{
+    min-height: 30px;
+    font-size: 14px;
+  }}
+  div[data-testid="stNumberInput"] input,
+  div[data-testid="stTextInput"] input {{
+    min-height: 30px;
+    font-size: 15px;
+    padding: 2px 4px;
+  }}
+  .compact-rate,
+  .scenario-header,
+  .scenario-team {{
+    font-size: 14px;
+  }}
+  .scenario-team {{
+    line-height: 30px;
+  }}
+  .scenario-row {{
+    padding: 3px 4px 1px;
+  }}
+  .scenario-grid {{
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }}
+  .scenario-grid > div[data-testid="stHorizontalBlock"] {{
+    min-width: 720px;
+  }}
+}}
+@media (max-width: 640px) {{
+  .block-container {{
+    padding-left: 0.48rem;
+    padding-right: 0.48rem;
+  }}
+  .app-title {{
+    font-size: 1.55rem;
+  }}
+  .app-caption {{
+    font-size: 0.74rem;
+  }}
+  h2, h3 {{
+    font-size: 1.12rem !important;
+  }}
+  .styled-table {{
+    min-width: 360px;
+  }}
+  .scenario-grid > div[data-testid="stHorizontalBlock"] {{
+    min-width: 680px;
+  }}
 }}
 </style>
 """,
