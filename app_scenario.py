@@ -5,6 +5,7 @@ import os
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 from yusho.npb_client import (
@@ -51,14 +52,17 @@ def main() -> None:
         )
         seed_enabled = st.checkbox("乱数を固定", value=True)
         seed = st.number_input("Seed", min_value=0, max_value=999_999, value=42, step=1)
-        verify_ssl = st.toggle(
-            "SSL検証",
-            value=os.getenv("NPB_VERIFY_SSL", "true").lower() not in {"0", "false", "no"},
-        )
-        use_env_proxy = st.toggle(
-            "環境変数プロキシを使う",
-            value=os.getenv("NPB_USE_ENV_PROXY", "false").lower() in {"1", "true", "yes"},
-        )
+        with st.expander("通信設定（通常変更不要）", expanded=False):
+            verify_ssl = st.toggle(
+                "SSL検証",
+                value=os.getenv("NPB_VERIFY_SSL", "true").lower() not in {"0", "false", "no"},
+                help="NPB公式サイトの証明書を検証します。公開環境ではオン推奨です。",
+            )
+            use_env_proxy = st.toggle(
+                "環境変数プロキシを使う",
+                value=os.getenv("NPB_USE_ENV_PROXY", "false").lower() in {"1", "true", "yes"},
+                help="HTTP_PROXY / HTTPS_PROXY などの環境変数に設定されたプロキシを使います。通常はオフです。",
+            )
         if st.button("公式データを再取得", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
@@ -451,36 +455,50 @@ def _champion_date_chart(result: SimulationResult, team_name: str, dark_mode: bo
     frame = result.champion_dates.copy()
     if frame.empty:
         return px.bar(title=f"{team_name}の優勝確定日は記録されませんでした")
+    frame["Date"] = pd.to_datetime(frame["Date"]).dt.normalize()
+    frame = frame.groupby("Date", as_index=False)["Probability"].sum()
+    frame = frame.sort_values("Date").reset_index(drop=True)
+    calendar = pd.DataFrame(
+        {"Date": pd.date_range(frame["Date"].min(), frame["Date"].max(), freq="D")}
+    )
+    frame = calendar.merge(frame, on="Date", how="left")
+    frame["Probability"] = frame["Probability"].fillna(0.0)
     frame["ProbabilityPct"] = frame["Probability"] * 100
     frame["DateLabel"] = frame["Date"].dt.month.astype(str) + "/" + frame["Date"].dt.day.astype(str)
+    category_order = frame["DateLabel"].tolist()
     top_dates = set(frame.nlargest(3, "ProbabilityPct")["Date"])
-    frame["Group"] = frame["Date"].apply(lambda value: "上位3日" if value in top_dates else "その他")
+    top_color = "#f97316" if dark_mode else "#d64b3c"
+    other_color = "#3b82f6" if dark_mode else "#2f6f8f"
+    frame["BarColor"] = frame["Date"].apply(lambda value: top_color if value in top_dates else other_color)
 
-    fig = px.bar(
-        frame,
-        x="DateLabel",
-        y="ProbabilityPct",
-        color="Group",
-        color_discrete_map={
-            "上位3日": "#f97316" if dark_mode else "#d64b3c",
-            "その他": "#3b82f6" if dark_mode else "#2f6f8f",
-        },
-        labels={"DateLabel": "日付", "ProbabilityPct": "確率 (%)", "Group": ""},
-        title=f"{team_name} 優勝確定日分布",
+    fig = go.Figure(
+        data=[
+            go.Bar(
+                x=frame["DateLabel"],
+                y=frame["ProbabilityPct"],
+                marker_color=frame["BarColor"],
+                hovertemplate="%{x}<br>%{y:.1f}%<extra></extra>",
+            )
+        ]
     )
-    fig.update_traces(hovertemplate="%{x}<br>%{y:.1f}%<extra></extra>")
     fig.update_layout(
+        title=f"{team_name} 優勝確定日分布",
         height=440,
         margin={"l": 10, "r": 10, "t": 60, "b": 10},
-        legend_orientation="h",
-        legend_y=1.08,
-        legend_x=1,
-        legend_xanchor="right",
+        showlegend=False,
         plot_bgcolor="#182338" if dark_mode else "#ffffff",
         paper_bgcolor="#182338" if dark_mode else "#ffffff",
         font={"color": "#f8fafc" if dark_mode else "#172033"},
-        xaxis={"gridcolor": "#334155" if dark_mode else "#e5eaf0"},
-        yaxis={"gridcolor": "#334155" if dark_mode else "#e5eaf0"},
+        xaxis={
+            "gridcolor": "#334155" if dark_mode else "#e5eaf0",
+            "categoryorder": "array",
+            "categoryarray": category_order,
+            "tickmode": "array",
+            "tickvals": category_order,
+            "ticktext": category_order,
+            "title": "日付",
+        },
+        yaxis={"gridcolor": "#334155" if dark_mode else "#e5eaf0", "title": "確率 (%)"},
     )
     return fig
 
