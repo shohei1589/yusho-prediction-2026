@@ -52,7 +52,7 @@ def main() -> None:
         )
         seed_enabled = st.checkbox("乱数を固定", value=True)
         seed = st.number_input("Seed", min_value=0, max_value=999_999, value=42, step=1)
-        with st.expander("通信設定（通常変更不要）", expanded=False):
+        with st.expander("通信設定", expanded=False):
             verify_ssl = st.toggle(
                 "SSL検証",
                 value=os.getenv("NPB_VERIFY_SSL", "true").lower() not in {"0", "false", "no"},
@@ -684,6 +684,22 @@ div[data-testid="stExpander"] details summary p {{
   font-size: 19px;
   font-weight: 900;
   color: {text};
+}}
+section[data-testid="stSidebar"] div[data-testid="stExpander"] {{
+  box-shadow: none;
+  margin-top: 0.2rem;
+  margin-bottom: 0.55rem;
+}}
+section[data-testid="stSidebar"] div[data-testid="stExpander"] details summary {{
+  min-height: 34px;
+  padding: 0.12rem 0.35rem;
+}}
+section[data-testid="stSidebar"] div[data-testid="stExpander"] details summary p {{
+  font-size: 13px;
+  font-weight: 800;
+}}
+section[data-testid="stSidebar"] div[data-testid="stExpander"] div[data-testid="stExpanderDetails"] {{
+  padding-top: 0.35rem;
 }}
 div[data-testid="stAlert"] {{
   background: {info_bg};
