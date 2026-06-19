@@ -227,11 +227,10 @@ def _render_summary(
     team_name = team_label(target_team)
     probability = result.champion_probability * 100
 
-    metric_cols = st.columns([1, 1, 1, 1])
+    metric_cols = st.columns([1, 1, 1])
     metric_cols[0].metric(f"{team_name} 優勝確率", f"{probability:.1f}%")
     metric_cols[1].metric("対象球団の残り試合", f"{_remaining_games(schedule, target_team)}")
-    metric_cols[2].metric("対象球団の残り開催日", f"{_remaining_game_dates(schedule, target_team)}")
-    metric_cols[3].metric("試行回数", f"{simulation_count:,}")
+    metric_cols[2].metric("試行回数", f"{simulation_count:,}")
 
     tab_result, tab_standings, tab_schedule, tab_model = st.tabs(
         ["予測", "入力値", "残り日程", "前提"]
@@ -243,6 +242,7 @@ def _render_summary(
             st.plotly_chart(
                 _champion_date_chart(result, target_team, team_name, dark_mode),
                 use_container_width=True,
+                config={"displayModeBar": False, "scrollZoom": False, "responsive": True},
             )
         with right:
             st.subheader("優勝確定日 上位")
@@ -327,6 +327,15 @@ def _reset_scenario_state(prefix: str, scenario_input: pd.DataFrame) -> None:
 
 def _render_scenario_controls(prefix: str, scenario_input: pd.DataFrame) -> None:
     _render_mobile_scenario_table(prefix, scenario_input)
+    mobile_edit_open = str(st.query_params.get("mobile_edit", "0")) == "1"
+    edit_label = "閲覧に戻る" if mobile_edit_open else "勝敗を編集する"
+    edit_target = "0" if mobile_edit_open else "1"
+    st.markdown(
+        f"<div class='mobile-edit-actions'><a class='mobile-edit-link' href='?mobile_edit={edit_target}'>{edit_label}</a></div>",
+        unsafe_allow_html=True,
+    )
+    if mobile_edit_open:
+        st.markdown("<div class='mobile-edit-enabled'></div>", unsafe_allow_html=True)
 
     st.markdown("<div class='scenario-grid'>", unsafe_allow_html=True)
     header = st.columns([1.35, 1.12, 1.12, 1.12, 0.82, 0.98])
@@ -827,6 +836,26 @@ div[data-testid="stDataFrame"] {{
 .mobile-scenario-table {{
   display: none;
 }}
+.mobile-edit-actions {{
+  display: none;
+}}
+.mobile-edit-link {{
+  display: block;
+  width: 100%;
+  margin-top: 0.55rem;
+  padding: 0.62rem 0.75rem;
+  border: 1px solid {border};
+  border-radius: 8px;
+  background: {surface};
+  color: {text} !important;
+  text-align: center;
+  font-weight: 900;
+  text-decoration: none !important;
+  box-shadow: 0 8px 18px rgba(32, 50, 70, 0.08);
+}}
+.mobile-edit-enabled {{
+  display: none;
+}}
 .styled-table {{
   width: 100%;
   border-collapse: collapse;
@@ -1015,6 +1044,10 @@ button[kind="primary"] {{
   div[data-testid="stPlotlyChart"] {{
     border-radius: 6px;
   }}
+  .modebar-container,
+  .modebar {{
+    display: none !important;
+  }}
   button[kind="secondary"] {{
     min-height: 30px;
     font-size: 14px;
@@ -1053,6 +1086,9 @@ button[kind="primary"] {{
     background: {surface};
     box-shadow: 0 8px 18px rgba(32, 50, 70, 0.08);
   }}
+  .mobile-edit-actions {{
+    display: block;
+  }}
   .mobile-table {{
     width: 100%;
     table-layout: fixed;
@@ -1089,6 +1125,46 @@ button[kind="primary"] {{
   }}
   .mobile-table tr:last-child td {{
     border-bottom: 0;
+  }}
+  .stApp:has(.mobile-edit-enabled) .mobile-scenario-table {{
+    display: none;
+  }}
+  .stApp:has(.mobile-edit-enabled) .scenario-grid {{
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }}
+  .stApp:has(.mobile-edit-enabled) div[data-testid="stExpander"] div[data-testid="stExpanderDetails"] {{
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }}
+  .stApp:has(.mobile-edit-enabled) div[data-testid="stHorizontalBlock"]:has(.scenario-header),
+  .stApp:has(.mobile-edit-enabled) div[data-testid="stHorizontalBlock"]:has(.scenario-team) {{
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    min-width: 720px;
+  }}
+  .stApp:has(.mobile-edit-enabled) .scenario-row {{
+    display: block !important;
+  }}
+  .stApp:has(.mobile-edit-enabled) div[data-testid="stHorizontalBlock"]:has(button):has(div[data-testid="stNumberInput"]) {{
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    gap: 0.24rem !important;
+    min-width: 124px;
+  }}
+  .stApp:has(.mobile-edit-enabled) div[data-testid="stHorizontalBlock"]:has(button):has(div[data-testid="stNumberInput"]) > div[data-testid="column"]:first-child,
+  .stApp:has(.mobile-edit-enabled) div[data-testid="stHorizontalBlock"]:has(button):has(div[data-testid="stNumberInput"]) > div[data-testid="column"]:last-child {{
+    flex: 0 0 30px !important;
+    width: 30px !important;
+    min-width: 30px !important;
+  }}
+  .stApp:has(.mobile-edit-enabled) div[data-testid="stHorizontalBlock"]:has(button):has(div[data-testid="stNumberInput"]) > div[data-testid="column"]:nth-child(2) {{
+    flex: 0 0 58px !important;
+    width: 58px !important;
+    min-width: 58px !important;
   }}
 }}
 @media (max-width: 640px) {{
