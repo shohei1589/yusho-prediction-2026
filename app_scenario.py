@@ -269,9 +269,10 @@ def _render_summary(
 - 基準日は「その日の試合開始前」として扱います。
 - 勝敗表の初期値はNPB.jpから取得した現在値です。過去日や任意シナリオでは、勝・敗・分を手で調整してください。
 - 今後の想定勝率は、残り試合の勝敗確率を決めるために使います。
-- 対戦勝率はLog5風のオッズ比で計算します。
+- 残り試合はモンテカルロ法で多数回シミュレーションし、優勝確率と優勝確定日分布を推定します。
+- 各試合の勝敗確率は、両チームの今後想定勝率からLog5風のオッズ比で計算します。
 - 引分の発生、先発投手、球場、移動、故障者、雨天中止の追加発生はモデルに含めていません。
-- 優勝確定日は、対象球団が残り全敗しても他球団が勝率で上回れない最初の日として判定しています。
+- 優勝確定日は、各日終了時点で「対象チームの残り試合を含めた最低勝率」が「他チームの残り試合を含めた最高勝率」を上回る最初の日として判定しています。
 """
         )
 
@@ -645,22 +646,13 @@ def _format_schedule(schedule: pd.DataFrame, target_team: str) -> pd.DataFrame:
     frame = schedule.copy()
     frame = frame[(frame["HomeTeam"] == target_team) | (frame["AwayTeam"] == target_team)]
     if frame.empty:
-        return pd.DataFrame(columns=["日付", "カード", "球場", "開始", "状態"])
+        return pd.DataFrame(columns=["日付", "カード", "球場", "開始"])
     frame["日付"] = frame["Date"].dt.strftime("%Y-%m-%d")
     frame["カード"] = frame.apply(
         lambda row: f"{team_label(row.HomeTeam)} - {team_label(row.AwayTeam)}",
         axis=1,
     )
-    frame["状態"] = frame["Status"].map(
-        {
-            "scheduled": "予定",
-            "in_progress": "進行中",
-            "final": "終了",
-            "canceled": "中止",
-            "other": "その他",
-        }
-    )
-    return frame[["日付", "カード", "Venue", "StartTime", "状態"]].rename(
+    return frame[["日付", "カード", "Venue", "StartTime"]].rename(
         columns={"Venue": "球場", "StartTime": "開始"}
     )
 
@@ -1047,6 +1039,16 @@ button[kind="primary"] {{
   .modebar-container,
   .modebar {{
     display: none !important;
+  }}
+  div[data-testid="stPlotlyChart"] .js-plotly-plot,
+  div[data-testid="stPlotlyChart"] .plotly,
+  div[data-testid="stPlotlyChart"] .main-svg {{
+    touch-action: pan-y !important;
+  }}
+  div[data-testid="stPlotlyChart"] .draglayer,
+  div[data-testid="stPlotlyChart"] .nsewdrag,
+  div[data-testid="stPlotlyChart"] .zoomlayer {{
+    pointer-events: none !important;
   }}
   button[kind="secondary"] {{
     min-height: 30px;
