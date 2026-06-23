@@ -115,23 +115,25 @@ def main() -> None:
     scenario_input = _scenario_input_frame(standings_result.frame, league)
     _initialize_scenario_state(editor_key, scenario_input)
 
-    with st.expander("勝敗を編集", expanded=True):
-        st.caption(
-            "勝敗表の初期値はNPB公式の現在値です。過去日や未来日を基準にする場合は、"
-            "その日付の試合開始前時点に合わせて勝・敗・分を調整してください。"
-        )
-        reset_col, note_col = st.columns([1, 4])
-        with reset_col:
-            if st.button("公式値に戻す", use_container_width=True):
-                _reset_scenario_state(editor_key, scenario_input)
-                st.rerun()
-        with note_col:
-            st.markdown(
-                "<div class='scenario-note'>今後の想定勝率は、残り試合の強さとして使います。勝敗表の現在勝率とは別に調整できます。</div>",
-                unsafe_allow_html=True,
+    editor_col, _ = st.columns([0.72, 0.28])
+    with editor_col:
+        with st.expander("勝敗を編集", expanded=True):
+            st.caption(
+                "勝敗表の初期値はNPB公式の現在値です。過去日や未来日を基準にする場合は、"
+                "その日付の試合開始前時点に合わせて勝・敗・分を調整してください。"
             )
+            reset_col, note_col = st.columns([1, 4])
+            with reset_col:
+                if st.button("公式値に戻す", use_container_width=True):
+                    _reset_scenario_state(editor_key, scenario_input)
+                    st.rerun()
+            with note_col:
+                st.markdown(
+                    "<div class='scenario-note'>今後の想定勝率は、残り試合の強さとして使います。勝敗表の現在勝率とは別に調整できます。</div>",
+                    unsafe_allow_html=True,
+                )
 
-        _render_scenario_controls(editor_key, scenario_input)
+            _render_scenario_controls(editor_key, scenario_input)
 
     try:
         scenario_standings, assumed_win_rates = _scenario_to_model_inputs(editor_key, scenario_input)
