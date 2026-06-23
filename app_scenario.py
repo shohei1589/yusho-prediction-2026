@@ -338,6 +338,12 @@ def _render_scenario_controls(prefix: str, scenario_input: pd.DataFrame) -> None
     if mobile_edit_open:
         st.markdown("<div class='mobile-edit-enabled'></div>", unsafe_allow_html=True)
 
+    _, desktop_body, _ = st.columns([0.07, 0.86, 0.07])
+    with desktop_body:
+        _render_desktop_scenario_grid(prefix, scenario_input)
+
+
+def _render_desktop_scenario_grid(prefix: str, scenario_input: pd.DataFrame) -> None:
     st.markdown("<div class='scenario-grid'>", unsafe_allow_html=True)
     header = st.columns([1.35, 1.12, 1.12, 1.12, 0.82, 0.98])
     for col, label in zip(header, ["球団", "勝", "敗", "分", "現在勝率", "今後勝率"]):
@@ -884,18 +890,18 @@ div[data-testid="stDataFrame"] {{
   font-weight: 800;
 }}
 button[kind="secondary"] {{
-  min-height: 34px;
-  padding: 0 6px;
+  min-height: 30px;
+  padding: 0 5px;
   font-weight: 800;
-  font-size: 17px;
+  font-size: 15px;
   background: {button_bg};
   border-color: {border};
   color: {text};
 }}
 div[data-testid="stNumberInput"] input {{
-  min-height: 34px;
-  padding: 3px 6px;
-  font-size: 18px;
+  min-height: 30px;
+  padding: 2px 5px;
+  font-size: 16px;
   font-weight: 900;
   text-align: center;
   color: {text};
@@ -903,15 +909,15 @@ div[data-testid="stNumberInput"] input {{
   border-color: {border};
 }}
 div[data-testid="stNumberInput"] button {{
-  min-height: 34px;
+  min-height: 30px;
   font-weight: 800;
   background: {button_bg};
   color: {text};
 }}
 div[data-testid="stTextInput"] input {{
-  min-height: 34px;
-  padding: 3px 8px;
-  font-size: 17px;
+  min-height: 30px;
+  padding: 2px 7px;
+  font-size: 16px;
   font-weight: 900;
   text-align: center;
   color: {text};
@@ -921,31 +927,31 @@ div[data-testid="stTextInput"] input {{
 .compact-rate {{
   display: inline-block;
   width: 100%;
-  padding-top: 5px;
+  padding-top: 3px;
   font-variant-numeric: tabular-nums;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 900;
   text-align: center;
   color: {text};
 }}
 .scenario-header {{
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 900;
   line-height: 1.1;
-  padding: 2px 0 4px;
+  padding: 1px 0 2px;
   text-align: center;
   color: {text};
 }}
 .scenario-team {{
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 900;
-  line-height: 34px;
+  line-height: 30px;
   white-space: nowrap;
   text-align: center;
   color: {text};
 }}
 div[data-testid="stHorizontalBlock"] {{
-  gap: 0.42rem;
+  gap: 0.28rem;
 }}
 .scenario-grid {{
   border: 1px solid {border};
@@ -953,10 +959,12 @@ div[data-testid="stHorizontalBlock"] {{
   overflow: hidden;
   background: {surface};
   box-shadow: {shadow};
+  max-width: 1120px;
+  margin: 0 auto;
 }}
 .scenario-row {{
   border-top: 1px solid {border};
-  padding: 4px 6px 2px;
+  padding: 2px 5px 1px;
   background: {surface};
 }}
 .scenario-row:nth-of-type(even) {{
@@ -965,7 +973,7 @@ div[data-testid="stHorizontalBlock"] {{
 .scenario-grid > div[data-testid="stHorizontalBlock"]:first-of-type {{
   background: {surface_soft};
   border-bottom: 1px solid {border};
-  padding: 5px 6px 2px;
+  padding: 3px 5px 1px;
 }}
 .stCaptionContainer, .stMarkdown p {{
   color: {muted};
