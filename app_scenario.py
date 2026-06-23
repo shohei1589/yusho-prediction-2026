@@ -126,7 +126,10 @@ def main() -> None:
                 _reset_scenario_state(editor_key, scenario_input)
                 st.rerun()
         with note_col:
-            st.info("今後の想定勝率は、残り試合の強さとして使います。勝敗表の現在勝率とは別に調整できます。")
+            st.markdown(
+                "<div class='scenario-note'>今後の想定勝率は、残り試合の強さとして使います。勝敗表の現在勝率とは別に調整できます。</div>",
+                unsafe_allow_html=True,
+            )
 
         _render_scenario_controls(editor_key, scenario_input)
 
@@ -338,9 +341,7 @@ def _render_scenario_controls(prefix: str, scenario_input: pd.DataFrame) -> None
     if mobile_edit_open:
         st.markdown("<div class='mobile-edit-enabled'></div>", unsafe_allow_html=True)
 
-    _, desktop_body, _ = st.columns([0.15, 0.70, 0.15])
-    with desktop_body:
-        _render_desktop_scenario_grid(prefix, scenario_input)
+    _render_desktop_scenario_grid(prefix, scenario_input)
 
 
 def _render_desktop_scenario_grid(prefix: str, scenario_input: pd.DataFrame) -> None:
@@ -809,6 +810,19 @@ div[data-testid="stAlert"] p {{
   line-height: 1.35;
   font-weight: 700;
 }}
+.scenario-note {{
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 28px;
+  padding: 0 0.72rem;
+  border-radius: 7px;
+  background: {info_bg};
+  color: {primary};
+  font-size: 0.88rem;
+  line-height: 1.25;
+  font-weight: 800;
+}}
 div[data-testid="stMetric"] {{
   background: {surface};
   border: 1px solid {border};
@@ -896,6 +910,10 @@ div[data-testid="stDataFrame"] {{
   font-weight: 800;
 }}
 button[kind="secondary"] {{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
   min-height: 28px;
   padding: 0 5px;
   font-weight: 800;
@@ -904,9 +922,22 @@ button[kind="secondary"] {{
   border-color: {border};
   color: {text};
 }}
+button[kind="secondary"] p {{
+  width: 100%;
+  margin: 0;
+  line-height: 1;
+  text-align: center;
+}}
+div[data-testid="stNumberInput"],
+div[data-testid="stTextInput"] {{
+  display: flex;
+  align-items: center;
+}}
 div[data-testid="stNumberInput"] input {{
+  height: 28px;
   min-height: 28px;
-  padding: 2px 5px;
+  padding: 0 5px;
+  line-height: 28px;
   font-size: 15px;
   font-weight: 900;
   text-align: center;
@@ -915,14 +946,20 @@ div[data-testid="stNumberInput"] input {{
   border-color: {border};
 }}
 div[data-testid="stNumberInput"] button {{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
   min-height: 28px;
   font-weight: 800;
   background: {button_bg};
   color: {text};
 }}
 div[data-testid="stTextInput"] input {{
+  height: 28px;
   min-height: 28px;
-  padding: 2px 7px;
+  padding: 0 7px;
+  line-height: 28px;
   font-size: 15px;
   font-weight: 900;
   text-align: center;
@@ -931,9 +968,12 @@ div[data-testid="stTextInput"] input {{
   border-color: {border};
 }}
 .compact-rate {{
-  display: inline-block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
-  padding-top: 2px;
+  height: 28px;
+  padding-top: 0;
   font-variant-numeric: tabular-nums;
   font-size: 15px;
   font-weight: 900;
@@ -941,17 +981,25 @@ div[data-testid="stTextInput"] input {{
   color: {text};
 }}
 .scenario-header {{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
   font-size: 14px;
   font-weight: 900;
   line-height: 1.1;
-  padding: 1px 0 2px;
+  padding: 0;
   text-align: center;
   color: {text};
 }}
 .scenario-team {{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
   font-size: 15px;
   font-weight: 900;
-  line-height: 28px;
+  line-height: 1;
   white-space: nowrap;
   text-align: center;
   color: {text};
@@ -966,7 +1014,7 @@ div[data-testid="stHorizontalBlock"] {{
   background: {surface};
   box-shadow: {shadow};
   max-width: 900px;
-  margin: 0 auto;
+  margin: 0;
 }}
 .scenario-grid > div[data-testid="stHorizontalBlock"]:first-of-type {{
   background: {surface_soft};
@@ -976,8 +1024,8 @@ div[data-testid="stHorizontalBlock"] {{
 div[data-testid="stHorizontalBlock"]:has(.scenario-header),
 div[data-testid="stHorizontalBlock"]:has(.scenario-team) {{
   max-width: 900px;
-  margin-left: auto !important;
-  margin-right: auto !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
   align-items: center;
 }}
 div[data-testid="stHorizontalBlock"]:has(.scenario-header) {{
@@ -1005,6 +1053,10 @@ div[data-testid="stHorizontalBlock"]:has(.scenario-team) div[data-testid="stButt
 div[data-testid="stHorizontalBlock"]:has(.scenario-team) div[data-testid="stNumberInput"],
 div[data-testid="stHorizontalBlock"]:has(.scenario-team) div[data-testid="stTextInput"] {{
   margin-bottom: 0 !important;
+}}
+div[data-testid="stHorizontalBlock"]:has(.scenario-team) div[data-testid="stButton"] {{
+  display: flex;
+  align-items: center;
 }}
 .stCaptionContainer, .stMarkdown p {{
   color: {muted};
