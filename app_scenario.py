@@ -650,10 +650,15 @@ def _format_final_standings(final_standings: pd.DataFrame) -> pd.DataFrame:
 
 
 def _format_schedule(schedule: pd.DataFrame, target_team: str) -> pd.DataFrame:
+    columns = ["日付", "カード", "球場", "開始"]
+    if schedule.empty or "Date" not in schedule.columns:
+        return pd.DataFrame(columns=columns)
     frame = schedule.copy()
+    frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+    frame = frame.dropna(subset=["Date"])
     frame = frame[(frame["HomeTeam"] == target_team) | (frame["AwayTeam"] == target_team)]
     if frame.empty:
-        return pd.DataFrame(columns=["日付", "カード", "球場", "開始"])
+        return pd.DataFrame(columns=columns)
     frame["日付"] = frame["Date"].dt.strftime("%Y-%m-%d")
     frame["カード"] = frame.apply(
         lambda row: f"{team_label(row.HomeTeam)} - {team_label(row.AwayTeam)}",
