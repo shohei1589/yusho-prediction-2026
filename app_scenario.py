@@ -338,7 +338,7 @@ def _render_scenario_controls(prefix: str, scenario_input: pd.DataFrame) -> None
     if mobile_edit_open:
         st.markdown("<div class='mobile-edit-enabled'></div>", unsafe_allow_html=True)
 
-    _, desktop_body, _ = st.columns([0.07, 0.86, 0.07])
+    _, desktop_body, _ = st.columns([0.12, 0.76, 0.12])
     with desktop_body:
         _render_desktop_scenario_grid(prefix, scenario_input)
 
@@ -803,6 +803,14 @@ div[data-testid="stAlert"] {{
   background: {info_bg};
   border-radius: 7px;
 }}
+div[data-testid="stAlert"] > div {{
+  padding: 0.48rem 0.72rem;
+}}
+div[data-testid="stAlert"] p {{
+  font-size: 0.88rem;
+  line-height: 1.35;
+  font-weight: 700;
+}}
 div[data-testid="stMetric"] {{
   background: {surface};
   border: 1px solid {border};
@@ -890,18 +898,18 @@ div[data-testid="stDataFrame"] {{
   font-weight: 800;
 }}
 button[kind="secondary"] {{
-  min-height: 30px;
+  min-height: 28px;
   padding: 0 5px;
   font-weight: 800;
-  font-size: 15px;
+  font-size: 14px;
   background: {button_bg};
   border-color: {border};
   color: {text};
 }}
 div[data-testid="stNumberInput"] input {{
-  min-height: 30px;
+  min-height: 28px;
   padding: 2px 5px;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 900;
   text-align: center;
   color: {text};
@@ -909,15 +917,15 @@ div[data-testid="stNumberInput"] input {{
   border-color: {border};
 }}
 div[data-testid="stNumberInput"] button {{
-  min-height: 30px;
+  min-height: 28px;
   font-weight: 800;
   background: {button_bg};
   color: {text};
 }}
 div[data-testid="stTextInput"] input {{
-  min-height: 30px;
+  min-height: 28px;
   padding: 2px 7px;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 900;
   text-align: center;
   color: {text};
@@ -927,15 +935,15 @@ div[data-testid="stTextInput"] input {{
 .compact-rate {{
   display: inline-block;
   width: 100%;
-  padding-top: 3px;
+  padding-top: 2px;
   font-variant-numeric: tabular-nums;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 900;
   text-align: center;
   color: {text};
 }}
 .scenario-header {{
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 900;
   line-height: 1.1;
   padding: 1px 0 2px;
@@ -943,15 +951,15 @@ div[data-testid="stTextInput"] input {{
   color: {text};
 }}
 .scenario-team {{
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 900;
-  line-height: 30px;
+  line-height: 28px;
   white-space: nowrap;
   text-align: center;
   color: {text};
 }}
 div[data-testid="stHorizontalBlock"] {{
-  gap: 0.28rem;
+  gap: 0.22rem;
 }}
 .scenario-grid {{
   border: 1px solid {border};
@@ -959,12 +967,12 @@ div[data-testid="stHorizontalBlock"] {{
   overflow: hidden;
   background: {surface};
   box-shadow: {shadow};
-  max-width: 1120px;
+  max-width: 1020px;
   margin: 0 auto;
 }}
 .scenario-row {{
   border-top: 1px solid {border};
-  padding: 2px 5px 1px;
+  padding: 0;
   background: {surface};
 }}
 .scenario-row:nth-of-type(even) {{
@@ -973,7 +981,28 @@ div[data-testid="stHorizontalBlock"] {{
 .scenario-grid > div[data-testid="stHorizontalBlock"]:first-of-type {{
   background: {surface_soft};
   border-bottom: 1px solid {border};
-  padding: 3px 5px 1px;
+  padding: 2px 4px 0;
+}}
+div[data-testid="stHorizontalBlock"]:has(.scenario-header),
+div[data-testid="stHorizontalBlock"]:has(.scenario-team) {{
+  max-width: 1020px;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  align-items: center;
+}}
+div[data-testid="stHorizontalBlock"]:has(.scenario-header) {{
+  padding: 1px 0 0;
+}}
+div[data-testid="stHorizontalBlock"]:has(.scenario-team) {{
+  min-height: 46px;
+  padding: 2px 0;
+  border-top: 1px solid {border};
+}}
+div[data-testid="stHorizontalBlock"]:has(.scenario-team) div[data-testid="stElementContainer"],
+div[data-testid="stHorizontalBlock"]:has(.scenario-team) div[data-testid="stButton"],
+div[data-testid="stHorizontalBlock"]:has(.scenario-team) div[data-testid="stNumberInput"],
+div[data-testid="stHorizontalBlock"]:has(.scenario-team) div[data-testid="stTextInput"] {{
+  margin-bottom: 0 !important;
 }}
 .stCaptionContainer, .stMarkdown p {{
   color: {muted};
