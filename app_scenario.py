@@ -338,7 +338,7 @@ def _render_scenario_controls(prefix: str, scenario_input: pd.DataFrame) -> None
     if mobile_edit_open:
         st.markdown("<div class='mobile-edit-enabled'></div>", unsafe_allow_html=True)
 
-    _, desktop_body, _ = st.columns([0.12, 0.76, 0.12])
+    _, desktop_body, _ = st.columns([0.15, 0.70, 0.15])
     with desktop_body:
         _render_desktop_scenario_grid(prefix, scenario_input)
 
@@ -350,7 +350,6 @@ def _render_desktop_scenario_grid(prefix: str, scenario_input: pd.DataFrame) -> 
         col.markdown(f"<div class='scenario-header'>{label}</div>", unsafe_allow_html=True)
 
     for _, row in scenario_input.iterrows():
-        st.markdown("<div class='scenario-row'>", unsafe_allow_html=True)
         team = str(row["Team"])
         cols = st.columns([1.35, 1.12, 1.12, 1.12, 0.82, 0.98])
         cols[0].markdown(f"<div class='scenario-team'>{row['球団']}</div>", unsafe_allow_html=True)
@@ -374,7 +373,6 @@ def _render_desktop_scenario_grid(prefix: str, scenario_input: pd.DataFrame) -> 
                 key=_scenario_widget_key(prefix, team, "rate"),
                 label_visibility="collapsed",
             )
-        st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -967,36 +965,40 @@ div[data-testid="stHorizontalBlock"] {{
   overflow: hidden;
   background: {surface};
   box-shadow: {shadow};
-  max-width: 1020px;
+  max-width: 900px;
   margin: 0 auto;
-}}
-.scenario-row {{
-  border-top: 1px solid {border};
-  padding: 0;
-  background: {surface};
-}}
-.scenario-row:nth-of-type(even) {{
-  background: {surface_soft};
 }}
 .scenario-grid > div[data-testid="stHorizontalBlock"]:first-of-type {{
   background: {surface_soft};
   border-bottom: 1px solid {border};
-  padding: 2px 4px 0;
+  padding: 1px 4px 0;
 }}
 div[data-testid="stHorizontalBlock"]:has(.scenario-header),
 div[data-testid="stHorizontalBlock"]:has(.scenario-team) {{
-  max-width: 1020px;
+  max-width: 900px;
   margin-left: auto !important;
   margin-right: auto !important;
   align-items: center;
 }}
 div[data-testid="stHorizontalBlock"]:has(.scenario-header) {{
-  padding: 1px 0 0;
+  min-height: 28px;
+  padding: 0;
 }}
 div[data-testid="stHorizontalBlock"]:has(.scenario-team) {{
-  min-height: 46px;
-  padding: 2px 0;
+  min-height: 34px;
+  padding: 0;
   border-top: 1px solid {border};
+}}
+div[data-testid="stHorizontalBlock"]:has(.scenario-team) > div[data-testid="column"] {{
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}}
+div[data-testid="stHorizontalBlock"]:has(.scenario-team) div[data-testid="stVerticalBlock"] {{
+  gap: 0 !important;
+}}
+div[data-testid="stHorizontalBlock"]:has(.scenario-team) div[data-testid="stHorizontalBlock"]:has(button):has(div[data-testid="stNumberInput"]) {{
+  gap: 0.16rem !important;
+  align-items: center !important;
 }}
 div[data-testid="stHorizontalBlock"]:has(.scenario-team) div[data-testid="stElementContainer"],
 div[data-testid="stHorizontalBlock"]:has(.scenario-team) div[data-testid="stButton"],
