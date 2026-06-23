@@ -118,18 +118,18 @@ def main() -> None:
     editor_col, _ = st.columns([0.88, 0.12])
     with editor_col:
         with st.expander("勝敗を編集", expanded=True):
-            st.caption(
-                "勝敗表の初期値はNPB公式の現在値です。過去日や未来日を基準にする場合は、"
-                "その日付の試合開始前時点に合わせて勝・敗・分を調整してください。"
+            st.markdown(
+                "<div class='scenario-caption'>初期値はNPB公式の現在値です。基準日を変える場合は、試合開始前時点の勝・敗・分に調整してください。</div>",
+                unsafe_allow_html=True,
             )
-            reset_col, note_col = st.columns([1, 4.2])
+            reset_col, note_col = st.columns([0.9, 4.8])
             with reset_col:
                 if st.button("公式値に戻す", use_container_width=True):
                     _reset_scenario_state(editor_key, scenario_input)
                     st.rerun()
             with note_col:
                 st.markdown(
-                    "<div class='scenario-note'>今後勝率は、残り試合の強さとして使います。現在勝率とは別に調整できます。</div>",
+                    "<div class='scenario-note'>「今後勝率」は残り試合での勝率となります（手動で調整可能）</div>",
                     unsafe_allow_html=True,
                 )
 
@@ -812,17 +812,25 @@ div[data-testid="stAlert"] p {{
   line-height: 1.35;
   font-weight: 700;
 }}
+.scenario-caption {{
+  margin: 0 0 0.45rem;
+  color: {muted};
+  font-size: 0.80rem;
+  line-height: 1.35;
+  font-weight: 700;
+  white-space: nowrap;
+}}
 .scenario-note {{
   display: inline-flex;
   align-items: center;
   width: fit-content;
   max-width: 100%;
   min-height: 30px;
-  padding: 0 0.82rem;
+  padding: 0 0.68rem;
   border-radius: 7px;
   background: {info_bg};
   color: {primary};
-  font-size: 0.88rem;
+  font-size: 0.84rem;
   line-height: 1.25;
   font-weight: 800;
   white-space: nowrap;
@@ -1119,6 +1127,9 @@ button[kind="primary"] {{
   .table-card {{
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+  }}
+  .scenario-caption {{
+    white-space: normal;
   }}
   .scenario-note {{
     width: 100%;
