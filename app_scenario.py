@@ -119,7 +119,7 @@ def main() -> None:
     with editor_col:
         with st.expander("勝敗を編集", expanded=True):
             st.markdown(
-                "<div class='scenario-caption'>初期値はNPB公式の現在値です。基準日を変える場合は、試合開始前時点の勝・敗・分に調整してください。</div>",
+                "<div class='scenario-caption'>初期値はNPB公式値です。基準日を変える場合は、試合前時点の勝・敗・分に調整してください。</div>",
                 unsafe_allow_html=True,
             )
             reset_col, note_col = st.columns([0.9, 4.8])
@@ -813,12 +813,17 @@ div[data-testid="stAlert"] p {{
   font-weight: 700;
 }}
 .scenario-caption {{
-  margin: 0 0 0.45rem;
+  display: block;
+  min-height: 22px;
+  margin: 0.15rem 0 0.65rem;
+  padding: 0;
+  overflow: hidden;
   color: {muted};
-  font-size: 0.80rem;
-  line-height: 1.35;
+  font-size: 0.78rem;
+  line-height: 22px;
   font-weight: 700;
   white-space: nowrap;
+  text-overflow: ellipsis;
 }}
 .scenario-note {{
   display: inline-flex;
