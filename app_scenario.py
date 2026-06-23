@@ -654,12 +654,13 @@ def _format_schedule(schedule: pd.DataFrame, target_team: str) -> pd.DataFrame:
     if schedule.empty or "Date" not in schedule.columns:
         return pd.DataFrame(columns=columns)
     frame = schedule.copy()
-    frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
-    frame = frame.dropna(subset=["Date"])
     frame = frame[(frame["HomeTeam"] == target_team) | (frame["AwayTeam"] == target_team)]
     if frame.empty:
         return pd.DataFrame(columns=columns)
-    frame["日付"] = frame["Date"].dt.strftime("%Y-%m-%d")
+    frame["日付"] = _first_column(frame, "Date").map(_date_label)
+    frame = frame.dropna(subset=["日付"])
+    if frame.empty:
+        return pd.DataFrame(columns=columns)
     frame["カード"] = frame.apply(
         lambda row: f"{team_label(row.HomeTeam)} - {team_label(row.AwayTeam)}",
         axis=1,
@@ -673,9 +674,24 @@ def _top_dates(champion_dates: pd.DataFrame) -> pd.DataFrame:
     if champion_dates.empty:
         return pd.DataFrame(columns=["日付", "確率"])
     frame = champion_dates.sort_values("Probability", ascending=False).head(10).copy()
-    frame["日付"] = frame["Date"].dt.strftime("%Y-%m-%d")
+    frame["日付"] = _first_column(frame, "Date").map(_date_label)
+    frame = frame.dropna(subset=["日付"])
     frame["確率"] = frame["Probability"].map(lambda value: f"{value * 100:.1f}%")
     return frame[["日付", "確率"]]
+
+
+def _first_column(frame: pd.DataFrame, column: str) -> pd.Series:
+    values = frame[column]
+    if isinstance(values, pd.DataFrame):
+        return values.iloc[:, 0]
+    return values
+
+
+def _date_label(value: object) -> str | pd.NA:
+    timestamp = pd.to_datetime(value, errors="coerce")
+    if pd.isna(timestamp):
+        return pd.NA
+    return timestamp.strftime("%Y-%m-%d")
 
 
 def _remaining_games(schedule: pd.DataFrame, team: str) -> int:
