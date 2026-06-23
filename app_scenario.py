@@ -988,7 +988,7 @@ div[data-testid="stTextInput"] input {{
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 30px;
+  min-height: 38px;
   font-size: 14px;
   font-weight: 900;
   line-height: 1.1;
@@ -1023,7 +1023,7 @@ div[data-testid="stHorizontalBlock"] {{
 .scenario-grid > div[data-testid="stHorizontalBlock"]:first-of-type {{
   background: {surface_soft};
   border-bottom: 1px solid {border};
-  padding: 2px 6px 1px;
+  padding: 2px 6px;
 }}
 div[data-testid="stHorizontalBlock"]:has(.scenario-header),
 div[data-testid="stHorizontalBlock"]:has(.scenario-team) {{
@@ -1033,8 +1033,8 @@ div[data-testid="stHorizontalBlock"]:has(.scenario-team) {{
   align-items: center;
 }}
 div[data-testid="stHorizontalBlock"]:has(.scenario-header) {{
-  min-height: 28px;
-  padding: 0;
+  min-height: 40px;
+  padding: 2px 0;
 }}
 div[data-testid="stHorizontalBlock"]:has(.scenario-team) {{
   min-height: 40px;
