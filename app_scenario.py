@@ -115,21 +115,21 @@ def main() -> None:
     scenario_input = _scenario_input_frame(standings_result.frame, league)
     _initialize_scenario_state(editor_key, scenario_input)
 
-    editor_col, _ = st.columns([0.72, 0.28])
+    editor_col, _ = st.columns([0.82, 0.18])
     with editor_col:
         with st.expander("勝敗を編集", expanded=True):
             st.caption(
                 "勝敗表の初期値はNPB公式の現在値です。過去日や未来日を基準にする場合は、"
                 "その日付の試合開始前時点に合わせて勝・敗・分を調整してください。"
             )
-            reset_col, note_col = st.columns([1, 4])
+            reset_col, note_col = st.columns([1, 3.8])
             with reset_col:
                 if st.button("公式値に戻す", use_container_width=True):
                     _reset_scenario_state(editor_key, scenario_input)
                     st.rerun()
             with note_col:
                 st.markdown(
-                    "<div class='scenario-note'>今後の想定勝率は、残り試合の強さとして使います。勝敗表の現在勝率とは別に調整できます。</div>",
+                    "<div class='scenario-note'>今後勝率は、残り試合の強さとして使います。現在勝率とは別に調整できます。</div>",
                     unsafe_allow_html=True,
                 )
 
@@ -816,6 +816,7 @@ div[data-testid="stAlert"] p {{
   display: inline-flex;
   align-items: center;
   width: fit-content;
+  max-width: 100%;
   min-height: 28px;
   padding: 0 0.72rem;
   border-radius: 7px;
@@ -824,6 +825,7 @@ div[data-testid="stAlert"] p {{
   font-size: 0.88rem;
   line-height: 1.25;
   font-weight: 800;
+  white-space: nowrap;
 }}
 div[data-testid="stMetric"] {{
   background: {surface};
@@ -1015,8 +1017,8 @@ div[data-testid="stHorizontalBlock"] {{
   overflow: hidden;
   background: {surface};
   box-shadow: {shadow};
-  max-width: 900px;
-  margin: 0;
+  max-width: 960px;
+  margin: 0.7rem 0 0;
 }}
 .scenario-grid > div[data-testid="stHorizontalBlock"]:first-of-type {{
   background: {surface_soft};
@@ -1025,7 +1027,7 @@ div[data-testid="stHorizontalBlock"] {{
 }}
 div[data-testid="stHorizontalBlock"]:has(.scenario-header),
 div[data-testid="stHorizontalBlock"]:has(.scenario-team) {{
-  max-width: 900px;
+  max-width: 960px;
   margin-left: 0 !important;
   margin-right: 0 !important;
   align-items: center;
@@ -1117,6 +1119,10 @@ button[kind="primary"] {{
   .table-card {{
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+  }}
+  .scenario-note {{
+    width: 100%;
+    white-space: normal;
   }}
   .styled-table {{
     min-width: 420px;
