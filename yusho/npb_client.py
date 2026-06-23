@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from html import unescape
 from html.parser import HTMLParser
@@ -17,6 +18,20 @@ from .teams import CENTRAL, PACIFIC, NPB_NAME_TO_CODE, league_teams
 
 BASE_URL = "https://npb.jp"
 SCHEDULE_MONTHS = tuple(range(3, 12))
+SCHEDULE_COLUMNS = [
+    "Date",
+    "HomeTeam",
+    "AwayTeam",
+    "HomeTeamName",
+    "AwayTeamName",
+    "Score1",
+    "Score2",
+    "State",
+    "Status",
+    "Venue",
+    "StartTime",
+]
+REQUEST_TIMEOUT = (4, 8)
 
 
 @dataclass(frozen=True)
@@ -99,7 +114,7 @@ def _fetch_html(url: str) -> str:
     session.trust_env = use_env_proxy
     response = session.get(
         url,
-        timeout=20,
+        timeout=REQUEST_TIMEOUT,
         headers={"User-Agent": "yusho-prediction/0.1 (+non-commercial research)"},
         verify=verify_ssl,
     )
@@ -162,19 +177,52 @@ def fetch_standings(year: int, league: str) -> FetchResult:
 
 
 def fetch_schedule(year: int, start_date: date | None = None) -> FetchResult:
-    frames: list[pd.DataFrame] = []
-    urls: list[str] = []
-    for month in SCHEDULE_MONTHS:
-        url = f"{BASE_URL}/games/{year}/schedule_{month:02d}_detail.html"
-        html = _fetch_html(url)
-        urls.append(url)
-        frames.append(_parse_schedule_month(html, year))
+    month_results: list[tuple[int, str, pd.DataFrame]] = []
+    months = _schedule_months_for(year, start_date)
+    if months:
+        worker_count = min(3, len(months))
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                executor.submit(_fetch_schedule_month, year, month): month
+                for month in months
+            }
+            for future in as_completed(futures):
+                try:
+                    month_results.append(future.result())
+                except requests.HTTPError as exc:
+                    if exc.response is not None and exc.response.status_code == 404:
+                        continue
+                    raise
 
-    schedule = pd.concat(frames, ignore_index=True)
-    if start_date is not None:
+    month_results.sort(key=lambda item: item[0])
+    urls = [url for _, url, _ in month_results]
+    frames = [frame for _, _, frame in month_results]
+    schedule = (
+        pd.concat(frames, ignore_index=True)
+        if frames
+        else pd.DataFrame(columns=SCHEDULE_COLUMNS)
+    )
+    if start_date is not None and not schedule.empty:
         schedule = schedule[schedule["Date"] >= pd.Timestamp(start_date)]
-    schedule = schedule.sort_values(["Date", "HomeTeam", "AwayTeam"]).reset_index(drop=True)
+    if not schedule.empty:
+        schedule = schedule.sort_values(["Date", "HomeTeam", "AwayTeam"])
+    schedule = schedule.reset_index(drop=True)
     return FetchResult(schedule, tuple(urls))
+
+
+def _schedule_months_for(year: int, start_date: date | None) -> tuple[int, ...]:
+    if start_date is None or start_date.year < year:
+        return SCHEDULE_MONTHS
+    if start_date.year > year:
+        return ()
+    start_month = max(SCHEDULE_MONTHS[0], min(start_date.month, SCHEDULE_MONTHS[-1]))
+    return tuple(month for month in SCHEDULE_MONTHS if month >= start_month)
+
+
+def _fetch_schedule_month(year: int, month: int) -> tuple[int, str, pd.DataFrame]:
+    url = f"{BASE_URL}/games/{year}/schedule_{month:02d}_detail.html"
+    html = _fetch_html(url)
+    return month, url, _parse_schedule_month(html, year)
 
 
 def fetch_remaining_schedule(
@@ -256,7 +304,7 @@ def _parse_schedule_month(html: str, year: int) -> pd.DataFrame:
                 "StartTime": _parts_text(place_cell, "time") if place_cell else "",
             }
         )
-    return pd.DataFrame(games)
+    return pd.DataFrame(games, columns=SCHEDULE_COLUMNS)
 
 
 def _first_cell_with_part(
