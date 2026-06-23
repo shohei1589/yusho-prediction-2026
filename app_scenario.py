@@ -115,14 +115,14 @@ def main() -> None:
     scenario_input = _scenario_input_frame(standings_result.frame, league)
     _initialize_scenario_state(editor_key, scenario_input)
 
-    editor_col, _ = st.columns([0.82, 0.18])
+    editor_col, _ = st.columns([0.88, 0.12])
     with editor_col:
         with st.expander("勝敗を編集", expanded=True):
             st.caption(
                 "勝敗表の初期値はNPB公式の現在値です。過去日や未来日を基準にする場合は、"
                 "その日付の試合開始前時点に合わせて勝・敗・分を調整してください。"
             )
-            reset_col, note_col = st.columns([1, 3.8])
+            reset_col, note_col = st.columns([1, 4.2])
             with reset_col:
                 if st.button("公式値に戻す", use_container_width=True):
                     _reset_scenario_state(editor_key, scenario_input)
@@ -817,8 +817,8 @@ div[data-testid="stAlert"] p {{
   align-items: center;
   width: fit-content;
   max-width: 100%;
-  min-height: 28px;
-  padding: 0 0.72rem;
+  min-height: 30px;
+  padding: 0 0.82rem;
   border-radius: 7px;
   background: {info_bg};
   color: {primary};
@@ -917,8 +917,8 @@ button[kind="secondary"] {{
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 28px;
-  min-height: 28px;
+  height: 30px;
+  min-height: 30px;
   padding: 0 5px;
   font-weight: 800;
   font-size: 14px;
@@ -938,10 +938,10 @@ div[data-testid="stTextInput"] {{
   align-items: center;
 }}
 div[data-testid="stNumberInput"] input {{
-  height: 28px;
-  min-height: 28px;
+  height: 30px;
+  min-height: 30px;
   padding: 0 5px;
-  line-height: 28px;
+  line-height: 30px;
   font-size: 15px;
   font-weight: 900;
   text-align: center;
@@ -953,17 +953,17 @@ div[data-testid="stNumberInput"] button {{
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 28px;
-  min-height: 28px;
+  height: 30px;
+  min-height: 30px;
   font-weight: 800;
   background: {button_bg};
   color: {text};
 }}
 div[data-testid="stTextInput"] input {{
-  height: 28px;
-  min-height: 28px;
+  height: 30px;
+  min-height: 30px;
   padding: 0 7px;
-  line-height: 28px;
+  line-height: 30px;
   font-size: 15px;
   font-weight: 900;
   text-align: center;
@@ -976,7 +976,7 @@ div[data-testid="stTextInput"] input {{
   align-items: center;
   justify-content: center;
   width: 100%;
-  height: 28px;
+  height: 30px;
   padding-top: 0;
   font-variant-numeric: tabular-nums;
   font-size: 15px;
@@ -988,7 +988,7 @@ div[data-testid="stTextInput"] input {{
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 28px;
+  min-height: 30px;
   font-size: 14px;
   font-weight: 900;
   line-height: 1.1;
@@ -1000,7 +1000,7 @@ div[data-testid="stTextInput"] input {{
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 28px;
+  min-height: 30px;
   font-size: 15px;
   font-weight: 900;
   line-height: 1;
@@ -1009,7 +1009,7 @@ div[data-testid="stTextInput"] input {{
   color: {text};
 }}
 div[data-testid="stHorizontalBlock"] {{
-  gap: 0.22rem;
+  gap: 0.28rem;
 }}
 .scenario-grid {{
   border: 1px solid {border};
@@ -1017,17 +1017,17 @@ div[data-testid="stHorizontalBlock"] {{
   overflow: hidden;
   background: {surface};
   box-shadow: {shadow};
-  max-width: 960px;
-  margin: 0.7rem 0 0;
+  max-width: 1040px;
+  margin: 0.85rem 0 0;
 }}
 .scenario-grid > div[data-testid="stHorizontalBlock"]:first-of-type {{
   background: {surface_soft};
   border-bottom: 1px solid {border};
-  padding: 1px 4px 0;
+  padding: 2px 6px 1px;
 }}
 div[data-testid="stHorizontalBlock"]:has(.scenario-header),
 div[data-testid="stHorizontalBlock"]:has(.scenario-team) {{
-  max-width: 960px;
+  max-width: 1040px;
   margin-left: 0 !important;
   margin-right: 0 !important;
   align-items: center;
@@ -1037,8 +1037,8 @@ div[data-testid="stHorizontalBlock"]:has(.scenario-header) {{
   padding: 0;
 }}
 div[data-testid="stHorizontalBlock"]:has(.scenario-team) {{
-  min-height: 34px;
-  padding: 0;
+  min-height: 40px;
+  padding: 2px 0;
   border-top: 1px solid {border};
 }}
 div[data-testid="stHorizontalBlock"]:has(.scenario-team) > div[data-testid="column"] {{
@@ -1049,7 +1049,7 @@ div[data-testid="stHorizontalBlock"]:has(.scenario-team) div[data-testid="stVert
   gap: 0 !important;
 }}
 div[data-testid="stHorizontalBlock"]:has(.scenario-team) div[data-testid="stHorizontalBlock"]:has(button):has(div[data-testid="stNumberInput"]) {{
-  gap: 0.16rem !important;
+  gap: 0.22rem !important;
   align-items: center !important;
 }}
 div[data-testid="stHorizontalBlock"]:has(.scenario-team) div[data-testid="stElementContainer"],
