@@ -25,7 +25,7 @@ git push -u origin main
 5. Deploy設定は次の通りです。
    - Branch: `main`
    - Main file path: `streamlit_app.py`
-   - Secrets: なし
+   - Secrets: 認証を使わない場合はなし。Googleログイン制限を使う場合は後述のSecretsを設定します。
 6. デプロイ後、画面を開いてNPB公式データの取得が通ることを確認します。
 
 ## 公開前チェック
@@ -47,3 +47,23 @@ git push
 ```
 
 Streamlit Community Cloud側で自動的に再デプロイされます。
+
+## Googleアカウント制限
+
+`g.softbank.co.jp` のGoogleアカウントだけに制限する場合は、Google CloudでOAuthクライアントを作成し、Streamlit Community CloudのApp settings > Secretsに次を設定します。
+
+```toml
+APP_AUTH_ENABLED = "true"
+APP_ALLOWED_EMAIL_DOMAIN = "g.softbank.co.jp"
+
+[auth]
+redirect_uri = "https://<your-app>.streamlit.app/oauth2callback"
+cookie_secret = "<random-long-secret>"
+client_id = "<google-oauth-client-id>"
+client_secret = "<google-oauth-client-secret>"
+server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
+```
+
+Google Cloud側のOAuthクライアントでは、Authorized redirect URIsに同じ `redirect_uri` を追加します。
+
+Secretsを保存すると、アプリはGoogleログインを要求します。ログイン後のメールアドレスが `@g.softbank.co.jp` でない場合は利用できません。

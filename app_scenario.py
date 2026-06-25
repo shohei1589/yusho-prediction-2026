@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date
 import os
 
@@ -36,6 +37,7 @@ TEAM_ACCENT_COLORS = {
     "E": "#991b1b",
     "L": "#1d4ed8",
 }
+DEFAULT_ALLOWED_EMAIL_DOMAIN = "g.softbank.co.jp"
 
 
 st.set_page_config(page_title="2026 優勝予測", layout="wide")
@@ -44,6 +46,7 @@ st.set_page_config(page_title="2026 優勝予測", layout="wide")
 def main() -> None:
     dark_mode = st.session_state.get("dark_mode", False)
     _apply_style(dark_mode)
+    _require_access()
 
     with st.sidebar:
         st.header("条件")
@@ -190,6 +193,81 @@ def main() -> None:
         simulation_count,
         dark_mode,
     )
+
+
+def _require_access() -> None:
+    if not _auth_enabled():
+        return
+    if not _auth_configured():
+        st.error("Googleログイン設定が未設定です。Streamlit CloudのSecretsに[auth]を設定してください。")
+        st.stop()
+
+    allowed_domain = _allowed_email_domain()
+    if not getattr(st.user, "is_logged_in", False):
+        _render_login_prompt(allowed_domain)
+        st.stop()
+
+    email = _user_value("email").lower()
+    if not email.endswith(f"@{allowed_domain}"):
+        st.error("このGoogleアカウントでは利用できません。会社アカウントでログインしてください。")
+        if st.button("別のGoogleアカウントでログイン", type="primary"):
+            st.logout()
+        st.stop()
+
+
+def _render_login_prompt(allowed_domain: str) -> None:
+    st.markdown("<h1 class='app-title'>2026 優勝予測</h1>", unsafe_allow_html=True)
+    st.info(f"会社Googleアカウント（@{allowed_domain}）でログインしてください。")
+    if st.button("Googleでログイン", type="primary"):
+        st.login()
+
+
+def _auth_enabled() -> bool:
+    configured = _auth_configured()
+    explicit = _config_value("APP_AUTH_ENABLED")
+    if explicit is None:
+        return configured
+    return str(explicit).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _auth_configured() -> bool:
+    auth = _auth_secrets()
+    required = ("redirect_uri", "cookie_secret", "client_id", "client_secret", "server_metadata_url")
+    return all(str(auth.get(key, "")).strip() for key in required)
+
+
+def _auth_secrets() -> Mapping[str, object]:
+    try:
+        auth = st.secrets.get("auth", {})
+    except Exception:
+        return {}
+    if isinstance(auth, Mapping):
+        return auth
+    return {}
+
+
+def _allowed_email_domain() -> str:
+    value = _config_value("APP_ALLOWED_EMAIL_DOMAIN")
+    return str(value or DEFAULT_ALLOWED_EMAIL_DOMAIN).strip().lower()
+
+
+def _config_value(key: str) -> object | None:
+    try:
+        if key in st.secrets:
+            return st.secrets[key]
+    except Exception:
+        pass
+    return os.getenv(key)
+
+
+def _user_value(key: str) -> str:
+    value = getattr(st.user, key, None)
+    if value:
+        return str(value)
+    try:
+        return str(st.user.get(key, ""))
+    except Exception:
+        return ""
 
 
 @st.cache_data(ttl=60 * 30, show_spinner=False)

@@ -2,3 +2,4 @@ pandas
 plotly
 requests
 streamlit
+Authlib>=1.3.2
