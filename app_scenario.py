@@ -218,11 +218,16 @@ def _require_access() -> None:
 def _render_login_prompt(allowed_domain: str) -> None:
     st.markdown("<h1 class='app-title'>2026 優勝予測</h1>", unsafe_allow_html=True)
     st.info(f"会社Googleアカウント（@{allowed_domain}）でログインしてください。")
+    if not _auth_supported():
+        st.warning("このStreamlit環境ではGoogleログイン機能が利用できません。")
+        return
     if st.button("Googleでログイン", type="primary"):
         st.login()
 
 
 def _auth_enabled() -> bool:
+    if not _auth_supported():
+        return False
     configured = _auth_configured()
     explicit = _config_value("APP_AUTH_ENABLED")
     if explicit is None:
@@ -244,6 +249,10 @@ def _auth_secrets() -> Mapping[str, object]:
     if isinstance(auth, Mapping):
         return auth
     return {}
+
+
+def _auth_supported() -> bool:
+    return all(hasattr(st, attr) for attr in ("user", "login", "logout"))
 
 
 def _allowed_email_domain() -> str:

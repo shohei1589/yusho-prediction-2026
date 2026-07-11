@@ -1,5 +1,13 @@
-from app_scenario import main
+import traceback
+
+import streamlit as st
 
 
-if __name__ == "__main__":
+try:
+    from app_scenario import main
+
     main()
+except Exception as exc:
+    st.error("アプリの起動に失敗しました。")
+    st.exception(exc)
+    traceback.print_exc()
