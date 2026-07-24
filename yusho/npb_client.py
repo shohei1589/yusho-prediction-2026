@@ -13,11 +13,14 @@ import pandas as pd
 import requests
 import urllib3
 
-from .teams import CENTRAL, PACIFIC, NPB_NAME_TO_CODE, league_teams
+from .teams import CENTRAL, PACIFIC, NPB_NAME_TO_CODE, league_teams, team_label
 
 
 BASE_URL = "https://npb.jp"
 SCHEDULE_MONTHS = tuple(range(3, 12))
+REGULAR_SEASON_GAMES = 143
+MAKEUP_UNKNOWN_OPPONENT = "TBD"
+MAKEUP_UNKNOWN_OPPONENT_NAME = "未定"
 SCHEDULE_COLUMNS = [
     "Date",
     "HomeTeam",
@@ -30,6 +33,8 @@ SCHEDULE_COLUMNS = [
     "Status",
     "Venue",
     "StartTime",
+    "IsMakeup",
+    "DateLabel",
 ]
 REQUEST_TIMEOUT = (4, 8)
 
@@ -240,11 +245,78 @@ def fetch_remaining_schedule(
     return FetchResult(frame.reset_index(drop=True), result.source_urls)
 
 
+def append_makeup_placeholders(
+    schedule: pd.DataFrame,
+    standings: pd.DataFrame,
+    league: str,
+    total_games: int = REGULAR_SEASON_GAMES,
+) -> pd.DataFrame:
+    """Add synthetic makeup games when official remaining fixtures are short."""
+    teams = league_teams(league)
+    frame = schedule.copy()
+    for column in SCHEDULE_COLUMNS:
+        if column not in frame.columns:
+            frame[column] = pd.NA
+    frame["IsMakeup"] = frame["IsMakeup"].fillna(False).astype(bool)
+    frame["DateLabel"] = frame["DateLabel"].fillna("").astype(str)
+
+    played_by_team = _played_games_by_team(standings)
+    deficits: dict[str, int] = {}
+    for team in teams:
+        played = played_by_team.get(team, 0)
+        remaining = int(((frame["HomeTeam"] == team) | (frame["AwayTeam"] == team)).sum())
+        deficits[team] = max(0, int(total_games) - played - remaining)
+
+    if not any(deficits.values()):
+        return _sort_schedule(frame)
+
+    last_date = pd.to_datetime(frame["Date"], errors="coerce").dropna().max()
+    if pd.isna(last_date):
+        last_date = pd.Timestamp.today().normalize()
+
+    placeholder_pairs: list[tuple[str, str]] = []
+    while True:
+        active = [
+            team
+            for team, count in sorted(deficits.items(), key=lambda item: (-item[1], item[0]))
+            if count > 0
+        ]
+        if len(active) < 2:
+            break
+        home, away = active[0], active[1]
+        placeholder_pairs.append((home, away))
+        deficits[home] -= 1
+        deficits[away] -= 1
+
+    for team, count in deficits.items():
+        for _ in range(count):
+            placeholder_pairs.append((team, MAKEUP_UNKNOWN_OPPONENT))
+
+    placeholder_count = len(placeholder_pairs)
+    placeholder_rows = [
+        _makeup_placeholder_row(
+            last_date + pd.Timedelta(days=index),
+            home,
+            away,
+            "振替日" if placeholder_count == 1 else f"振替日{index}",
+        )
+        for index, (home, away) in enumerate(placeholder_pairs, start=1)
+    ]
+    if not placeholder_rows:
+        return _sort_schedule(frame)
+
+    completed = pd.concat(
+        [frame, pd.DataFrame(placeholder_rows, columns=SCHEDULE_COLUMNS)],
+        ignore_index=True,
+    )
+    return _sort_schedule(completed)
+
+
 def schedule_to_daily_opponents(schedule: pd.DataFrame, league: str) -> pd.DataFrame:
     teams = league_teams(league)
     rows: list[dict[str, object]] = []
     for game_date, group in schedule.groupby("Date", sort=True):
-        row: dict[str, object] = {"Date": game_date}
+        row: dict[str, object] = {"Date": game_date, "DateLabel": _group_date_label(group)}
         for team in teams:
             row[f"{team}_Opponent"] = pd.NA
         for game in group.itertuples(index=False):
@@ -259,6 +331,65 @@ def schedule_to_daily_opponents(schedule: pd.DataFrame, league: str) -> pd.DataF
                 row[f"{away}_Opponent"] = home
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+def _played_games_by_team(standings: pd.DataFrame) -> dict[str, int]:
+    played: dict[str, int] = {}
+    for row in standings.itertuples(index=False):
+        team = str(row.Team)
+        if hasattr(row, "Games"):
+            played[team] = int(row.Games)
+        else:
+            played[team] = int(row.Wins) + int(row.Losses) + int(row.Ties)
+    return played
+
+
+def _makeup_placeholder_row(
+    game_date: pd.Timestamp,
+    home: str,
+    away: str,
+    date_label: str,
+) -> dict[str, object]:
+    return {
+        "Date": game_date,
+        "HomeTeam": home,
+        "AwayTeam": away,
+        "HomeTeamName": _schedule_team_name(home),
+        "AwayTeamName": _schedule_team_name(away),
+        "Score1": pd.NA,
+        "Score2": pd.NA,
+        "State": "振替日",
+        "Status": "makeup",
+        "Venue": "未定",
+        "StartTime": "",
+        "IsMakeup": True,
+        "DateLabel": date_label,
+    }
+
+
+def _schedule_team_name(code: str) -> str:
+    if code == MAKEUP_UNKNOWN_OPPONENT:
+        return MAKEUP_UNKNOWN_OPPONENT_NAME
+    return team_label(code)
+
+
+def _group_date_label(group: pd.DataFrame) -> str:
+    if "DateLabel" not in group.columns:
+        return ""
+    labels = [
+        str(value).strip()
+        for value in group["DateLabel"].dropna().unique()
+        if str(value).strip()
+    ]
+    return labels[0] if labels else ""
+
+
+def _sort_schedule(schedule: pd.DataFrame) -> pd.DataFrame:
+    if schedule.empty:
+        return schedule.loc[:, SCHEDULE_COLUMNS].reset_index(drop=True)
+    frame = schedule.loc[:, SCHEDULE_COLUMNS].copy()
+    frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+    return frame.sort_values(["Date", "HomeTeam", "AwayTeam"]).reset_index(drop=True)
 
 
 def _parse_schedule_month(html: str, year: int) -> pd.DataFrame:
@@ -302,6 +433,8 @@ def _parse_schedule_month(html: str, year: int) -> pd.DataFrame:
                 "Status": status,
                 "Venue": _parts_text(place_cell, "place") if place_cell else "",
                 "StartTime": _parts_text(place_cell, "time") if place_cell else "",
+                "IsMakeup": False,
+                "DateLabel": "",
             }
         )
     return pd.DataFrame(games, columns=SCHEDULE_COLUMNS)

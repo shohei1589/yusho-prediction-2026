@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from yusho.npb_client import (
+    append_makeup_placeholders,
     fetch_remaining_schedule,
     fetch_standings,
     schedule_to_daily_opponents,
@@ -103,7 +104,6 @@ def main() -> None:
                 verify_ssl,
                 use_env_proxy,
             )
-            daily_opponents = schedule_to_daily_opponents(schedule_result.frame, league)
     except Exception as exc:
         st.error("NPB公式データの取得に失敗しました。")
         st.exception(exc)
@@ -135,9 +135,16 @@ def main() -> None:
 
     try:
         scenario_standings, assumed_win_rates = _scenario_to_model_inputs(editor_key, scenario_input)
+        completed_schedule = append_makeup_placeholders(
+            schedule_result.frame,
+            scenario_standings,
+            league,
+        )
+        daily_opponents = schedule_to_daily_opponents(completed_schedule, league)
         scenario_signature = _scenario_signature(
             scenario_standings,
             assumed_win_rates,
+            completed_schedule,
             target_team,
             start_date,
             simulation_count,
@@ -163,12 +170,16 @@ def main() -> None:
                 "result": result,
                 "standings": scenario_standings,
                 "assumed_win_rates": assumed_win_rates,
+                "schedule": completed_schedule,
+                "daily_opponents": daily_opponents,
                 "signature": scenario_signature,
             }
         stored = st.session_state[result_key]
         result = stored["result"]
         displayed_standings = stored["standings"]
         displayed_rates = stored["assumed_win_rates"]
+        displayed_schedule = stored.get("schedule", completed_schedule)
+        displayed_daily_opponents = stored.get("daily_opponents", daily_opponents)
         if stored["signature"] != scenario_signature:
             st.warning("入力が変更されています。結果を更新するには「シミュレーション実行」を押してください。")
     except Exception as exc:
@@ -180,8 +191,8 @@ def main() -> None:
         result,
         displayed_standings,
         displayed_rates,
-        schedule_result.frame,
-        daily_opponents,
+        displayed_schedule,
+        displayed_daily_opponents,
         league,
         target_team,
         start_date,
@@ -234,6 +245,11 @@ def _render_summary(
     metric_cols[0].metric(f"{team_name} 優勝確率", f"{probability:.1f}%")
     metric_cols[1].metric("対象球団の残り試合", f"{_remaining_games(schedule, target_team)}")
     metric_cols[2].metric("試行回数", f"{simulation_count:,}")
+    makeup_count = _makeup_game_count(schedule)
+    if makeup_count:
+        st.caption(
+            f"公式日程と入力勝敗の合計が143試合に満たないため、不足分{makeup_count}試合を「振替日」として仮置きしています。"
+        )
 
     tab_result, tab_standings, tab_schedule, tab_model = st.tabs(
         ["予測", "入力値", "残り日程", "前提"]
@@ -474,6 +490,7 @@ def _scenario_to_model_inputs(
 def _scenario_signature(
     standings: pd.DataFrame,
     assumed_win_rates: dict[str, float],
+    schedule: pd.DataFrame,
     target_team: str,
     start_date: date,
     simulation_count: int,
@@ -488,9 +505,21 @@ def _scenario_signature(
         (team, round(float(rate), 4))
         for team, rate in sorted(assumed_win_rates.items())
     )
+    schedule_values = tuple(
+        (
+            str(row.Date),
+            str(row.HomeTeam),
+            str(row.AwayTeam),
+            str(getattr(row, "Status", "")),
+            bool(getattr(row, "IsMakeup", False)),
+            str(getattr(row, "DateLabel", "")),
+        )
+        for row in schedule.sort_values(["Date", "HomeTeam", "AwayTeam"]).itertuples(index=False)
+    )
     return (
         standing_values,
         rate_values,
+        schedule_values,
         target_team,
         start_date.isoformat(),
         int(simulation_count),
@@ -514,15 +543,22 @@ def _champion_date_chart(
     if frame.empty:
         return px.bar(title=f"{team_name}の優勝確定日は記録されませんでした")
     frame["Date"] = pd.to_datetime(frame["Date"]).dt.normalize()
-    frame = frame.groupby("Date", as_index=False)["Probability"].sum()
+    if "DateLabel" not in frame.columns:
+        frame["DateLabel"] = ""
+    frame["DateLabel"] = frame["DateLabel"].fillna("").astype(str)
+    frame = (
+        frame.groupby(["Date", "DateLabel"], as_index=False)["Probability"]
+        .sum()
+        .sort_values("Date")
+    )
     frame = frame.sort_values("Date").reset_index(drop=True)
     calendar = pd.DataFrame(
         {"Date": pd.date_range(frame["Date"].min(), frame["Date"].max(), freq="D")}
     )
     frame = calendar.merge(frame, on="Date", how="left")
     frame["Probability"] = frame["Probability"].fillna(0.0)
+    frame["DateLabel"] = frame.apply(_chart_date_label, axis=1)
     frame["ProbabilityPct"] = frame["Probability"] * 100
-    frame["DateLabel"] = frame["Date"].dt.month.astype(str) + "/" + frame["Date"].dt.day.astype(str)
     category_order = frame["DateLabel"].tolist()
     positive_frame = frame[frame["ProbabilityPct"] > 0]
     top_dates = set(positive_frame.nlargest(3, "ProbabilityPct")["Date"])
@@ -673,12 +709,12 @@ def _format_schedule(schedule: pd.DataFrame, target_team: str) -> pd.DataFrame:
     frame = frame[(frame["HomeTeam"] == target_team) | (frame["AwayTeam"] == target_team)]
     if frame.empty:
         return pd.DataFrame(columns=columns)
-    frame["日付"] = _first_column(frame, "Date").map(_date_label)
+    frame["日付"] = frame.apply(_schedule_date_label, axis=1)
     frame = frame.dropna(subset=["日付"])
     if frame.empty:
         return pd.DataFrame(columns=columns)
     frame["カード"] = frame.apply(
-        lambda row: f"{team_label(row.HomeTeam)} - {team_label(row.AwayTeam)}",
+        lambda row: f"{_schedule_team_label(row.HomeTeam)} - {_schedule_team_label(row.AwayTeam)}",
         axis=1,
     )
     return frame[["日付", "カード", "Venue", "StartTime"]].rename(
@@ -690,7 +726,7 @@ def _top_dates(champion_dates: pd.DataFrame) -> pd.DataFrame:
     if champion_dates.empty:
         return pd.DataFrame(columns=["日付", "確率"])
     frame = champion_dates.sort_values("Probability", ascending=False).head(10).copy()
-    frame["日付"] = _first_column(frame, "Date").map(_date_label)
+    frame["日付"] = frame.apply(_result_date_label, axis=1)
     frame = frame.dropna(subset=["日付"])
     frame["確率"] = frame["Probability"].map(lambda value: f"{value * 100:.1f}%")
     return frame[["日付", "確率"]]
@@ -710,6 +746,44 @@ def _date_label(value: object) -> str | pd.NA:
     return timestamp.strftime("%Y-%m-%d")
 
 
+def _chart_date_label(row: pd.Series) -> str:
+    label = _optional_label(row.get("DateLabel", ""))
+    if label:
+        return label
+    timestamp = pd.to_datetime(row.get("Date"), errors="coerce")
+    if pd.isna(timestamp):
+        return ""
+    return f"{timestamp.month}/{timestamp.day}"
+
+
+def _result_date_label(row: pd.Series) -> str | pd.NA:
+    label = _optional_label(row.get("DateLabel", ""))
+    if label:
+        return label
+    return _date_label(row.get("Date"))
+
+
+def _schedule_date_label(row: pd.Series) -> str | pd.NA:
+    is_makeup = bool(row.get("IsMakeup", False))
+    label = _optional_label(row.get("DateLabel", ""))
+    if is_makeup and label:
+        return label
+    return _date_label(row.get("Date"))
+
+
+def _schedule_team_label(code: object) -> str:
+    try:
+        return team_label(str(code))
+    except KeyError:
+        return "未定" if str(code) == "TBD" else str(code)
+
+
+def _optional_label(value: object) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
 def _remaining_games(schedule: pd.DataFrame, team: str) -> int:
     if schedule.empty:
         return 0
@@ -721,6 +795,12 @@ def _remaining_game_dates(schedule: pd.DataFrame, team: str) -> int:
         return 0
     frame = schedule[(schedule["HomeTeam"] == team) | (schedule["AwayTeam"] == team)]
     return int(frame["Date"].nunique())
+
+
+def _makeup_game_count(schedule: pd.DataFrame) -> int:
+    if schedule.empty or "IsMakeup" not in schedule.columns:
+        return 0
+    return int(schedule["IsMakeup"].fillna(False).astype(bool).sum())
 
 
 def _win_rate(wins: int | float, losses: int | float) -> float:

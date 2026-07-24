@@ -46,7 +46,7 @@ def run_simulations(
     fixed_win_rates = _fixed_win_rates(initial, teams, assumed_win_rates)
     total_games = _total_games(daily_opponents, initial, teams)
 
-    champion_dates: list[pd.Timestamp] = []
+    champion_dates: list[dict[str, object]] = []
     final_rows: list[dict[str, object]] = []
     no_champion_count = 0
 
@@ -94,7 +94,7 @@ def simulate_season(
     teams: tuple[str, ...],
     target_team: str,
     rng: random.Random,
-) -> tuple[pd.Timestamp | None, dict[str, dict[str, int]]]:
+) -> tuple[dict[str, object] | None, dict[str, dict[str, int]]]:
     standings = {
         team: {
             "Wins": values["Wins"],
@@ -106,6 +106,9 @@ def simulate_season(
 
     for row in daily_opponents.itertuples(index=False):
         game_date = row.Date
+        game_date_label = getattr(row, "DateLabel", "")
+        if pd.isna(game_date_label):
+            game_date_label = ""
         daily_results = {team: None for team in teams}
         processed_pairs: set[frozenset[str]] = set()
 
@@ -116,6 +119,10 @@ def simulate_season(
                 continue
             opponent = str(opponent)
             if opponent not in teams:
+                if daily_results[team] is None:
+                    daily_results[team] = (
+                        "Win" if rng.random() < fixed_win_rates[team] else "Lose"
+                    )
                 continue
             pair = frozenset((team, opponent))
             if pair in processed_pairs:
@@ -137,7 +144,10 @@ def simulate_season(
                 standings[team]["Losses"] += 1
 
         if _is_championship_decided(standings, total_games, teams, target_team):
-            return pd.Timestamp(game_date), standings
+            return {
+                "Date": pd.Timestamp(game_date),
+                "DateLabel": str(game_date_label).strip(),
+            }, standings
 
     return None, standings
 
@@ -210,15 +220,22 @@ def _remaining_games(
 
 
 def _champion_date_counts(
-    champion_dates: list[pd.Timestamp],
+    champion_dates: list[dict[str, object]],
     champion_probability: float,
 ) -> pd.DataFrame:
     if not champion_dates:
-        return pd.DataFrame(columns=["Date", "Probability"])
+        return pd.DataFrame(columns=["Date", "DateLabel", "Probability"])
 
-    counts = pd.Series(champion_dates).value_counts(normalize=True).reset_index()
-    counts.columns = ["Date", "Probability"]
+    frame = pd.DataFrame(champion_dates)
+    if "DateLabel" not in frame.columns:
+        frame["DateLabel"] = ""
+    frame["DateLabel"] = frame["DateLabel"].fillna("").astype(str)
+    counts = (
+        frame.groupby(["Date", "DateLabel"], dropna=False)
+        .size()
+        .reset_index(name="Count")
+    )
     counts["Date"] = pd.to_datetime(counts["Date"])
     counts = counts.sort_values("Date")
-    counts["Probability"] = counts["Probability"] * champion_probability
-    return counts.reset_index(drop=True)
+    counts["Probability"] = counts["Count"] / len(champion_dates) * champion_probability
+    return counts[["Date", "DateLabel", "Probability"]].reset_index(drop=True)
