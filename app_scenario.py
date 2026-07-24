@@ -346,13 +346,13 @@ def _render_scenario_controls(prefix: str, scenario_input: pd.DataFrame) -> None
 
 def _render_desktop_scenario_grid(prefix: str, scenario_input: pd.DataFrame) -> None:
     st.markdown("<div class='scenario-grid'>", unsafe_allow_html=True)
-    header = st.columns([1.35, 1.12, 1.12, 1.12, 0.82, 0.98])
+    header = st.columns([1.35, 1.12, 1.12, 1.12, 0.82, 0.82])
     for col, label in zip(header, ["球団", "勝", "敗", "分", "現在勝率", "今後勝率"]):
         col.markdown(f"<div class='scenario-header'>{label}</div>", unsafe_allow_html=True)
 
     for _, row in scenario_input.iterrows():
         team = str(row["Team"])
-        cols = st.columns([1.35, 1.12, 1.12, 1.12, 0.82, 0.98])
+        cols = st.columns([1.35, 1.12, 1.12, 1.12, 0.82, 0.82])
         cols[0].markdown(f"<div class='scenario-team'>{row['球団']}</div>", unsafe_allow_html=True)
         with cols[1]:
             _stepper(prefix, team, "wins", "勝")
@@ -533,6 +533,7 @@ def _champion_date_chart(
         for date_value, gray_color in zip(frame["Date"], gray_colors)
     ]
     y_max = max(0.5, float(frame["ProbabilityPct"].max()) * 1.18)
+    top_frame = frame[frame["Date"].isin(top_dates)].sort_values("Date")
 
     fig = go.Figure(
         data=[
@@ -575,6 +576,20 @@ def _champion_date_chart(
             "zerolinecolor": "#cbd5e1" if not dark_mode else "#475569",
         },
     )
+    for row in top_frame.itertuples(index=False):
+        fig.add_annotation(
+            x=row.DateLabel,
+            y=float(row.ProbabilityPct) + max(0.25, y_max * 0.015),
+            text=f"{float(row.ProbabilityPct):.1f}%",
+            showarrow=False,
+            xanchor="center",
+            yanchor="bottom",
+            font={
+                "size": 11,
+                "color": top_color if dark_mode else "#1d4ed8",
+                "family": "Noto Sans JP, Yu Gothic, sans-serif",
+            },
+        )
     return fig
 
 
@@ -968,6 +983,8 @@ div[data-testid="stNumberInput"],
 div[data-testid="stTextInput"] {{
   display: flex;
   align-items: center;
+  justify-content: center;
+  min-width: 0;
 }}
 div[data-testid="stNumberInput"] input {{
   height: 30px;
@@ -994,7 +1011,10 @@ div[data-testid="stNumberInput"] button {{
 div[data-testid="stTextInput"] input {{
   height: 30px;
   min-height: 30px;
-  padding: 0 7px;
+  width: 100%;
+  max-width: 160px;
+  box-sizing: border-box;
+  padding: 0 5px;
   line-height: 30px;
   font-size: 15px;
   font-weight: 900;
@@ -1193,6 +1213,7 @@ button[kind="primary"] {{
     min-height: 30px;
     font-size: 15px;
     padding: 2px 4px;
+    max-width: none;
   }}
   .compact-rate,
   .scenario-header,
