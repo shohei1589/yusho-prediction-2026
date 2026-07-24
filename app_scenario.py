@@ -532,8 +532,9 @@ def _champion_date_chart(
         top_color if date_value in top_dates else gray_color
         for date_value, gray_color in zip(frame["Date"], gray_colors)
     ]
-    y_max = max(0.5, float(frame["ProbabilityPct"].max()) * 1.18)
+    y_max = max(0.5, float(frame["ProbabilityPct"].max()) * 1.24)
     top_frame = frame[frame["Date"].isin(top_dates)].sort_values("Date")
+    label_offsets = [(-14, 9), (0, 14), (14, 9)]
 
     fig = go.Figure(
         data=[
@@ -576,14 +577,16 @@ def _champion_date_chart(
             "zerolinecolor": "#cbd5e1" if not dark_mode else "#475569",
         },
     )
-    for row in top_frame.itertuples(index=False):
+    for (xshift, yshift), row in zip(label_offsets, top_frame.itertuples(index=False)):
         fig.add_annotation(
             x=row.DateLabel,
             y=float(row.ProbabilityPct) + max(0.25, y_max * 0.015),
-            text=f"{float(row.ProbabilityPct):.1f}%",
+            text=f"<b>{float(row.ProbabilityPct):.1f}%</b>",
             showarrow=False,
             xanchor="center",
             yanchor="bottom",
+            xshift=xshift,
+            yshift=yshift,
             font={
                 "size": 12,
                 "color": top_color if dark_mode else "#1d4ed8",
