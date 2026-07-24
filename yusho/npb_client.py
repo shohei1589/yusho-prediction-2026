@@ -293,12 +293,13 @@ def append_makeup_placeholders(
             placeholder_pairs.append((team, MAKEUP_UNKNOWN_OPPONENT))
 
     placeholder_count = len(placeholder_pairs)
+    placeholder_label = f"振替日（残{placeholder_count}日）"
     placeholder_rows = [
         _makeup_placeholder_row(
             last_date + pd.Timedelta(days=index),
             home,
             away,
-            "振替日" if placeholder_count == 1 else f"振替日{index}",
+            placeholder_label,
         )
         for index, (home, away) in enumerate(placeholder_pairs, start=1)
     ]

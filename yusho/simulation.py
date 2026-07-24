@@ -227,15 +227,27 @@ def _champion_date_counts(
         return pd.DataFrame(columns=["Date", "DateLabel", "Probability"])
 
     frame = pd.DataFrame(champion_dates)
+    frame["Date"] = pd.to_datetime(frame["Date"])
     if "DateLabel" not in frame.columns:
         frame["DateLabel"] = ""
-    frame["DateLabel"] = frame["DateLabel"].fillna("").astype(str)
-    counts = (
-        frame.groupby(["Date", "DateLabel"], dropna=False)
-        .size()
-        .reset_index(name="Count")
-    )
-    counts["Date"] = pd.to_datetime(counts["Date"])
+    frame["DateLabel"] = frame["DateLabel"].fillna("").astype(str).str.strip()
+    labeled = frame[frame["DateLabel"] != ""]
+    regular = frame[frame["DateLabel"] == ""]
+
+    count_frames: list[pd.DataFrame] = []
+    if not regular.empty:
+        count_frames.append(
+            regular.groupby(["Date", "DateLabel"], dropna=False)
+            .size()
+            .reset_index(name="Count")
+        )
+    if not labeled.empty:
+        count_frames.append(
+            labeled.groupby("DateLabel", as_index=False)
+            .agg(Date=("Date", "min"), Count=("Date", "size"))
+            .loc[:, ["Date", "DateLabel", "Count"]]
+        )
+    counts = pd.concat(count_frames, ignore_index=True)
     counts = counts.sort_values("Date")
     counts["Probability"] = counts["Count"] / len(champion_dates) * champion_probability
     return counts[["Date", "DateLabel", "Probability"]].reset_index(drop=True)

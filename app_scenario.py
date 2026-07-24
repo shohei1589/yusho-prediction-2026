@@ -248,7 +248,7 @@ def _render_summary(
     makeup_count = _makeup_game_count(schedule)
     if makeup_count:
         st.caption(
-            f"公式日程と入力勝敗の合計が143試合に満たないため、不足分{makeup_count}試合を「振替日」として仮置きしています。"
+            f"公式日程と入力勝敗の合計が143試合に満たないため、不足分を「振替日（残{makeup_count}日）」として仮置きしています。"
         )
 
     tab_result, tab_standings, tab_schedule, tab_model = st.tabs(
@@ -570,7 +570,17 @@ def _champion_date_chart(
     ]
     y_max = max(0.5, float(frame["ProbabilityPct"].max()) * 1.24)
     top_frame = frame[frame["Date"].isin(top_dates)].sort_values("Date")
-    label_offsets = [(-14, 9), (0, 14), (14, 9)]
+    makeup_frame = frame[
+        frame["DateLabel"].astype(str).str.startswith("振替日")
+        & (frame["ProbabilityPct"] > 0)
+    ]
+    label_frame = (
+        pd.concat([top_frame, makeup_frame], ignore_index=True)
+        .drop_duplicates(subset=["DateLabel"], keep="first")
+        .sort_values("Date")
+        .reset_index(drop=True)
+    )
+    label_offsets = [(-14, 9), (0, 14), (14, 9), (0, 22)]
 
     fig = go.Figure(
         data=[
@@ -613,7 +623,8 @@ def _champion_date_chart(
             "zerolinecolor": "#cbd5e1" if not dark_mode else "#475569",
         },
     )
-    for (xshift, yshift), row in zip(label_offsets, top_frame.itertuples(index=False)):
+    for index, row in enumerate(label_frame.itertuples(index=False)):
+        xshift, yshift = label_offsets[index % len(label_offsets)]
         fig.add_annotation(
             x=row.DateLabel,
             y=float(row.ProbabilityPct) + max(0.25, y_max * 0.015),
