@@ -577,10 +577,12 @@ def _champion_date_chart(
         for date_label, gray_color in zip(frame["DateLabel"], gray_colors)
     ]
     y_max = max(0.5, float(frame["ProbabilityPct"].max()) * 1.24)
-    label_frame = frame.sort_values("Date").reset_index(drop=True)
-    label_offsets = [(-10, 7), (0, 13), (10, 7), (0, 19)]
-    neutral_label_color = "#d1d5db" if dark_mode else "#475569"
-    zero_label_color = "#94a3b8" if dark_mode else "#9aa3af"
+    label_frame = (
+        frame[frame["DateLabel"].isin(top_labels)]
+        .sort_values("Date")
+        .reset_index(drop=True)
+    )
+    label_offsets = [(-14, 9), (0, 14), (14, 9), (0, 22)]
 
     fig = go.Figure(
         data=[
@@ -627,37 +629,18 @@ def _champion_date_chart(
     for index, row in enumerate(label_frame.itertuples(index=False)):
         xshift, yshift = label_offsets[index % len(label_offsets)]
         probability_pct = float(row.ProbabilityPct)
-        is_zero_probability = probability_pct <= 0
-        is_top_label = str(row.DateLabel) in top_labels
-        is_multi_makeup = bool(getattr(row, "IsMultiMakeup", False))
-        label_color = (
-            zero_label_color
-            if is_zero_probability
-            else neutral_label_color
-            if is_multi_makeup or not is_top_label
-            else top_color if dark_mode else "#1d4ed8"
-        )
         fig.add_annotation(
             x=row.DateLabel,
-            y=(
-                probability_pct + max(0.18, y_max * 0.014)
-                if not is_zero_probability
-                else max(0.12, y_max * 0.026)
-            ),
-            text=(
-                "<b>無し</b>"
-                if is_zero_probability
-                else f"<b>{probability_pct:.1f}%</b>"
-            ),
+            y=probability_pct + max(0.25, y_max * 0.015),
+            text=f"<b>{probability_pct:.1f}%</b>",
             showarrow=False,
             xanchor="center",
             yanchor="bottom",
             xshift=xshift,
             yshift=yshift,
-            textangle=-25 if len(label_frame) >= 18 else 0,
             font={
-                "size": 12 if is_top_label and not is_multi_makeup else 10,
-                "color": label_color,
+                "size": 12,
+                "color": top_color if dark_mode else "#1d4ed8",
                 "family": "Noto Sans JP, Yu Gothic, sans-serif",
             },
         )
