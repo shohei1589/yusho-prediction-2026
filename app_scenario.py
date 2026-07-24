@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 import os
+import re
 
 import pandas as pd
 import plotly.express as px
@@ -545,33 +546,37 @@ def _champion_date_chart(
     frame["Date"] = pd.to_datetime(frame["Date"]).dt.normalize()
     if "DateLabel" not in frame.columns:
         frame["DateLabel"] = ""
-    frame["DateLabel"] = frame["DateLabel"].fillna("").astype(str)
-    frame = (
-        frame.groupby(["Date", "DateLabel"], as_index=False)["Probability"]
-        .sum()
-        .sort_values("Date")
-    )
+    frame["DateLabel"] = frame["DateLabel"].fillna("").astype(str).str.strip()
+    frame = _collapse_champion_date_rows(frame)
     frame = frame.sort_values("Date").reset_index(drop=True)
     calendar = pd.DataFrame(
         {"Date": pd.date_range(frame["Date"].min(), frame["Date"].max(), freq="D")}
     )
     frame = calendar.merge(frame, on="Date", how="left")
     frame["Probability"] = frame["Probability"].fillna(0.0)
+    frame["RawDateLabel"] = frame["DateLabel"].fillna("").astype(str).str.strip()
+    frame["MakeupDays"] = frame["RawDateLabel"].map(_makeup_label_days)
+    frame["IsMultiMakeup"] = (
+        frame["RawDateLabel"].str.startswith("振替日") & (frame["MakeupDays"] >= 2)
+    )
     frame["DateLabel"] = frame.apply(_chart_date_label, axis=1)
     frame["ProbabilityPct"] = frame["Probability"] * 100
     category_order = frame["DateLabel"].tolist()
     positive_frame = frame[frame["ProbabilityPct"] > 0]
-    top_dates = set(positive_frame.nlargest(3, "ProbabilityPct")["Date"])
+    top_labels = set(
+        positive_frame[~positive_frame["IsMultiMakeup"]]
+        .nlargest(3, "ProbabilityPct")["DateLabel"]
+    )
     top_color = TEAM_ACCENT_COLORS.get(target_team, "#2563eb")
     gray_colors = _gray_gradient_colors(frame["ProbabilityPct"], dark_mode)
     frame["BarColor"] = [
-        top_color if date_value in top_dates else gray_color
-        for date_value, gray_color in zip(frame["Date"], gray_colors)
+        top_color if date_label in top_labels else gray_color
+        for date_label, gray_color in zip(frame["DateLabel"], gray_colors)
     ]
     y_max = max(0.5, float(frame["ProbabilityPct"].max()) * 1.24)
-    top_frame = frame[frame["Date"].isin(top_dates)].sort_values("Date")
+    top_frame = frame[frame["DateLabel"].isin(top_labels)].sort_values("Date")
     makeup_frame = frame[
-        frame["DateLabel"].astype(str).str.startswith("振替日")
+        frame["RawDateLabel"].astype(str).str.startswith("振替日")
         & (frame["ProbabilityPct"] > 0)
     ]
     label_frame = (
@@ -581,6 +586,7 @@ def _champion_date_chart(
         .reset_index(drop=True)
     )
     label_offsets = [(-14, 9), (0, 14), (14, 9), (0, 22)]
+    neutral_label_color = "#d1d5db" if dark_mode else "#475569"
 
     fig = go.Figure(
         data=[
@@ -636,11 +642,44 @@ def _champion_date_chart(
             yshift=yshift,
             font={
                 "size": 12,
-                "color": top_color if dark_mode else "#1d4ed8",
+                "color": (
+                    neutral_label_color
+                    if bool(getattr(row, "IsMultiMakeup", False))
+                    else top_color if dark_mode else "#1d4ed8"
+                ),
                 "family": "Noto Sans JP, Yu Gothic, sans-serif",
             },
         )
     return fig
+
+
+def _collapse_champion_date_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    regular = frame[frame["DateLabel"] == ""]
+    labeled = frame[frame["DateLabel"] != ""]
+    frames: list[pd.DataFrame] = []
+    if not regular.empty:
+        frames.append(
+            regular.groupby(["Date", "DateLabel"], as_index=False)["Probability"].sum()
+        )
+    if not labeled.empty:
+        frames.append(
+            labeled.groupby("DateLabel", as_index=False)
+            .agg(Date=("Date", "max"), Probability=("Probability", "sum"))
+            .loc[:, ["Date", "DateLabel", "Probability"]]
+        )
+    if not frames:
+        return pd.DataFrame(columns=["Date", "DateLabel", "Probability"])
+    return pd.concat(frames, ignore_index=True).sort_values("Date")
+
+
+def _makeup_label_days(label: object) -> int:
+    text = str(label or "")
+    if not text.startswith("振替日"):
+        return 0
+    match = re.search(r"残(\d+)日", text)
+    if match:
+        return int(match.group(1))
+    return 1
 
 
 def _gray_gradient_colors(values: pd.Series, dark_mode: bool) -> list[str]:

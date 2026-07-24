@@ -244,7 +244,7 @@ def _champion_date_counts(
     if not labeled.empty:
         count_frames.append(
             labeled.groupby("DateLabel", as_index=False)
-            .agg(Date=("Date", "min"), Count=("Date", "size"))
+            .agg(Date=("Date", "max"), Count=("Date", "size"))
             .loc[:, ["Date", "DateLabel", "Count"]]
         )
     counts = pd.concat(count_frames, ignore_index=True)
