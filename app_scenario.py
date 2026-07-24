@@ -585,7 +585,7 @@ def _champion_date_chart(
             xanchor="center",
             yanchor="bottom",
             font={
-                "size": 11,
+                "size": 12,
                 "color": top_color if dark_mode else "#1d4ed8",
                 "family": "Noto Sans JP, Yu Gothic, sans-serif",
             },
