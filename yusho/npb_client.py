@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
+from itertools import combinations
 from html import unescape
 from html.parser import HTMLParser
 import os
@@ -13,12 +15,14 @@ import pandas as pd
 import requests
 import urllib3
 
-from .teams import CENTRAL, PACIFIC, NPB_NAME_TO_CODE, league_teams, team_label
+from .teams import CENTRAL, PACIFIC, TEAMS, NPB_NAME_TO_CODE, league_teams, team_label
 
 
 BASE_URL = "https://npb.jp"
 SCHEDULE_MONTHS = tuple(range(3, 12))
 REGULAR_SEASON_GAMES = 143
+INTRA_LEAGUE_PAIR_GAMES = 25
+INTERLEAGUE_PAIR_GAMES = 3
 MAKEUP_UNKNOWN_OPPONENT = "TBD"
 MAKEUP_UNKNOWN_OPPONENT_NAME = "未定"
 SCHEDULE_COLUMNS = [
@@ -250,6 +254,7 @@ def append_makeup_placeholders(
     standings: pd.DataFrame,
     league: str,
     total_games: int = REGULAR_SEASON_GAMES,
+    full_schedule: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Add synthetic makeup games when official remaining fixtures are short."""
     teams = league_teams(league)
@@ -274,7 +279,11 @@ def append_makeup_placeholders(
     if pd.isna(last_date):
         last_date = pd.Timestamp.today().normalize()
 
-    placeholder_pairs: list[tuple[str, str]] = []
+    placeholder_pairs, deficits = _infer_makeup_pairs_from_rules(
+        deficits,
+        league,
+        full_schedule,
+    )
     while True:
         active = [
             team
@@ -311,6 +320,103 @@ def append_makeup_placeholders(
         ignore_index=True,
     )
     return _sort_schedule(completed)
+
+
+def _infer_makeup_pairs_from_rules(
+    deficits: dict[str, int],
+    league: str,
+    full_schedule: pd.DataFrame | None,
+) -> tuple[list[tuple[str, str]], dict[str, int]]:
+    if full_schedule is None or full_schedule.empty:
+        return [], deficits
+
+    league_set = set(league_teams(league))
+    remaining_deficits = deficits.copy()
+    inferred_pairs: list[tuple[str, str]] = []
+
+    for home, away in _missing_pairs_from_schedule(full_schedule, league):
+        home_in_league = home in league_set
+        away_in_league = away in league_set
+        if home_in_league and remaining_deficits.get(home, 0) <= 0:
+            continue
+        if away_in_league and remaining_deficits.get(away, 0) <= 0:
+            continue
+
+        inferred_pairs.append((home, away))
+        if home_in_league:
+            remaining_deficits[home] -= 1
+        if away_in_league:
+            remaining_deficits[away] -= 1
+
+    return inferred_pairs, remaining_deficits
+
+
+def _missing_pairs_from_schedule(
+    full_schedule: pd.DataFrame,
+    league: str,
+) -> list[tuple[str, str]]:
+    teams = league_teams(league)
+    league_set = set(teams)
+    expected_pairs = _expected_pair_counts(league)
+    played_or_scheduled_counts: dict[tuple[str, str], int] = defaultdict(int)
+    canceled_pairs: dict[tuple[str, str], list[tuple[str, str]]] = defaultdict(list)
+
+    if full_schedule.empty:
+        return []
+
+    for row in full_schedule.itertuples(index=False):
+        home = str(getattr(row, "HomeTeam", ""))
+        away = str(getattr(row, "AwayTeam", ""))
+        if home not in TEAMS or away not in TEAMS:
+            continue
+        if home not in league_set and away not in league_set:
+            continue
+
+        key = _pair_key(home, away)
+        status = str(getattr(row, "Status", ""))
+        if status in {"final", "scheduled", "in_progress"}:
+            played_or_scheduled_counts[key] += 1
+        elif status == "canceled":
+            canceled_pairs[key].append((home, away))
+
+    missing_pairs: list[tuple[str, str]] = []
+    for pair, expected_count in expected_pairs.items():
+        missing_count = expected_count - played_or_scheduled_counts.get(pair, 0)
+        if missing_count <= 0:
+            continue
+        canceled_candidates = canceled_pairs.get(pair, [])
+        for index in range(missing_count):
+            if index < len(canceled_candidates):
+                missing_pairs.append(canceled_candidates[index])
+            else:
+                missing_pairs.append(_display_pair_order(pair[0], pair[1], league))
+
+    return missing_pairs
+
+
+def _expected_pair_counts(league: str) -> dict[tuple[str, str], int]:
+    teams = league_teams(league)
+    opposite = CENTRAL if league == PACIFIC else PACIFIC
+    expected: dict[tuple[str, str], int] = {}
+    for home, away in combinations(teams, 2):
+        expected[_pair_key(home, away)] = INTRA_LEAGUE_PAIR_GAMES
+    for team in teams:
+        for opponent in league_teams(opposite):
+            expected[_pair_key(team, opponent)] = INTERLEAGUE_PAIR_GAMES
+    return expected
+
+
+def _pair_key(home: str, away: str) -> tuple[str, str]:
+    return tuple(sorted((home, away)))
+
+
+def _display_pair_order(home: str, away: str, league: str) -> tuple[str, str]:
+    league_order = {team: index for index, team in enumerate(league_teams(league))}
+    if home in league_order and away not in league_order:
+        return home, away
+    if away in league_order and home not in league_order:
+        return away, home
+    return tuple(sorted((home, away), key=lambda team: league_order.get(team, 99)))
 
 
 def schedule_to_daily_opponents(schedule: pd.DataFrame, league: str) -> pd.DataFrame:

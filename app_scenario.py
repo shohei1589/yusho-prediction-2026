@@ -12,6 +12,7 @@ import streamlit as st
 from yusho.npb_client import (
     append_makeup_placeholders,
     fetch_remaining_schedule,
+    fetch_schedule,
     fetch_standings,
     schedule_to_daily_opponents,
 )
@@ -105,6 +106,11 @@ def main() -> None:
                 verify_ssl,
                 use_env_proxy,
             )
+            full_schedule_result = _cached_full_schedule(
+                int(year),
+                verify_ssl,
+                use_env_proxy,
+            )
     except Exception as exc:
         st.error("NPB公式データの取得に失敗しました。")
         st.exception(exc)
@@ -140,6 +146,7 @@ def main() -> None:
             schedule_result.frame,
             scenario_standings,
             league,
+            full_schedule=full_schedule_result.frame,
         )
         daily_opponents = schedule_to_daily_opponents(completed_schedule, league)
         scenario_signature = _scenario_signature(
@@ -227,6 +234,17 @@ def _cached_schedule(
     return fetch_remaining_schedule(year, league, start_date)
 
 
+@st.cache_data(ttl=60 * 30, show_spinner=False)
+def _cached_full_schedule(
+    year: int,
+    verify_ssl: bool,
+    use_env_proxy: bool,
+) -> object:
+    os.environ["NPB_VERIFY_SSL"] = "true" if verify_ssl else "false"
+    os.environ["NPB_USE_ENV_PROXY"] = "true" if use_env_proxy else "false"
+    return fetch_schedule(year)
+
+
 def _render_summary(
     result: SimulationResult,
     standings: pd.DataFrame,
@@ -249,7 +267,7 @@ def _render_summary(
     makeup_count = _makeup_game_count(schedule)
     if makeup_count:
         st.caption(
-            f"公式日程と入力勝敗の合計が143試合に満たないため、不足分を「振替日（残{makeup_count}日）」として仮置きしています。"
+            f"リーグ全体で公式日程と入力勝敗の合計が143試合に満たないため、不足分を「振替日（残{makeup_count}日）」として仮置きしています。"
         )
 
     tab_result, tab_standings, tab_schedule, tab_model = st.tabs(
@@ -282,6 +300,9 @@ def _render_summary(
     with tab_schedule:
         st.caption(f"基準日: {start_date.isoformat()} 以降の{team_label(target_team)}戦だけを表示しています。")
         _render_table(_format_schedule(schedule, target_team))
+        makeup_summary = _makeup_summary(schedule)
+        if makeup_summary:
+            st.caption(makeup_summary)
 
     with tab_model:
         st.markdown(
@@ -753,7 +774,11 @@ def _format_schedule(schedule: pd.DataFrame, target_team: str) -> pd.DataFrame:
     frame = frame[(frame["HomeTeam"] == target_team) | (frame["AwayTeam"] == target_team)]
     if frame.empty:
         return pd.DataFrame(columns=columns)
-    frame["日付"] = frame.apply(_schedule_date_label, axis=1)
+    target_makeup_count = _makeup_game_count(frame)
+    frame["日付"] = frame.apply(
+        lambda row: _schedule_date_label(row, target_makeup_count),
+        axis=1,
+    )
     frame = frame.dropna(subset=["日付"])
     if frame.empty:
         return pd.DataFrame(columns=columns)
@@ -764,6 +789,23 @@ def _format_schedule(schedule: pd.DataFrame, target_team: str) -> pd.DataFrame:
     return frame[["日付", "カード", "Venue", "StartTime"]].rename(
         columns={"Venue": "球場", "StartTime": "開始"}
     )
+
+
+def _makeup_summary(schedule: pd.DataFrame) -> str:
+    if schedule.empty or "IsMakeup" not in schedule.columns:
+        return ""
+    frame = schedule[schedule["IsMakeup"].fillna(False).astype(bool)].copy()
+    if frame.empty:
+        return ""
+    frame["カード"] = frame.apply(
+        lambda row: f"{_schedule_team_label(row.HomeTeam)} - {_schedule_team_label(row.AwayTeam)}",
+        axis=1,
+    )
+    parts = [
+        f"{card}×{count}"
+        for card, count in frame.groupby("カード", sort=False).size().items()
+    ]
+    return "リーグ全体の未定カード: " + "、".join(parts)
 
 
 def _top_dates(champion_dates: pd.DataFrame) -> pd.DataFrame:
@@ -807,10 +849,12 @@ def _result_date_label(row: pd.Series) -> str | pd.NA:
     return _date_label(row.get("Date"))
 
 
-def _schedule_date_label(row: pd.Series) -> str | pd.NA:
+def _schedule_date_label(row: pd.Series, target_makeup_count: int | None = None) -> str | pd.NA:
     is_makeup = bool(row.get("IsMakeup", False))
     label = _optional_label(row.get("DateLabel", ""))
     if is_makeup and label:
+        if target_makeup_count is not None:
+            return f"振替日（対象{target_makeup_count}試合）"
         return label
     return _date_label(row.get("Date"))
 
