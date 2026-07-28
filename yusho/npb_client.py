@@ -419,11 +419,23 @@ def _display_pair_order(home: str, away: str, league: str) -> tuple[str, str]:
     return tuple(sorted((home, away), key=lambda team: league_order.get(team, 99)))
 
 
-def schedule_to_daily_opponents(schedule: pd.DataFrame, league: str) -> pd.DataFrame:
+def schedule_to_daily_opponents(
+    schedule: pd.DataFrame,
+    league: str,
+    target_team: str | None = None,
+) -> pd.DataFrame:
     teams = league_teams(league)
+    makeup_counts = (
+        _target_makeup_counts(schedule, target_team)
+        if target_team is not None
+        else {"target": 0, "other": 0}
+    )
     rows: list[dict[str, object]] = []
     for game_date, group in schedule.groupby("Date", sort=True):
-        row: dict[str, object] = {"Date": game_date, "DateLabel": _group_date_label(group)}
+        row: dict[str, object] = {
+            "Date": game_date,
+            "DateLabel": _group_date_label(group, target_team, makeup_counts),
+        }
         for team in teams:
             row[f"{team}_Opponent"] = pd.NA
         for game in group.itertuples(index=False):
@@ -438,6 +450,17 @@ def schedule_to_daily_opponents(schedule: pd.DataFrame, league: str) -> pd.DataF
                 row[f"{away}_Opponent"] = home
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+def _target_makeup_counts(schedule: pd.DataFrame, target_team: str | None) -> dict[str, int]:
+    if target_team is None or schedule.empty or "IsMakeup" not in schedule.columns:
+        return {"target": 0, "other": 0}
+    makeup = schedule[schedule["IsMakeup"].fillna(False).astype(bool)]
+    if makeup.empty:
+        return {"target": 0, "other": 0}
+    target_mask = (makeup["HomeTeam"] == target_team) | (makeup["AwayTeam"] == target_team)
+    target_count = int(target_mask.sum())
+    return {"target": target_count, "other": int(len(makeup) - target_count)}
 
 
 def _played_games_by_team(standings: pd.DataFrame) -> dict[str, int]:
@@ -480,7 +503,21 @@ def _schedule_team_name(code: str) -> str:
     return team_label(code)
 
 
-def _group_date_label(group: pd.DataFrame) -> str:
+def _group_date_label(
+    group: pd.DataFrame,
+    target_team: str | None = None,
+    makeup_counts: dict[str, int] | None = None,
+) -> str:
+    if target_team is not None and "IsMakeup" in group.columns:
+        is_makeup = group["IsMakeup"].fillna(False).astype(bool)
+        if bool(is_makeup.any()):
+            target_mask = (group["HomeTeam"] == target_team) | (group["AwayTeam"] == target_team)
+            if bool(target_mask.any()):
+                count = (makeup_counts or {}).get("target", int(target_mask.sum()))
+                return f"自軍振替日（{count}試合）"
+            count = (makeup_counts or {}).get("other", int(is_makeup.sum()))
+            return f"他軍振替日（{count}試合）"
+
     if "DateLabel" not in group.columns:
         return ""
     labels = [

@@ -148,7 +148,7 @@ def main() -> None:
             league,
             full_schedule=full_schedule_result.frame,
         )
-        daily_opponents = schedule_to_daily_opponents(completed_schedule, league)
+        daily_opponents = schedule_to_daily_opponents(completed_schedule, league, target_team)
         scenario_signature = _scenario_signature(
             scenario_standings,
             assumed_win_rates,
@@ -264,11 +264,9 @@ def _render_summary(
     metric_cols[0].metric(f"{team_name} 優勝確率", f"{probability:.1f}%")
     metric_cols[1].metric("対象球団の残り試合", f"{_remaining_games(schedule, target_team)}")
     metric_cols[2].metric("試行回数", f"{simulation_count:,}")
-    makeup_count = _makeup_game_count(schedule)
-    if makeup_count:
-        st.caption(
-            f"リーグ全体で公式日程と入力勝敗の合計が143試合に満たないため、不足分を「振替日（残{makeup_count}日）」として仮置きしています。"
-        )
+    makeup_summary = _makeup_summary(schedule)
+    if makeup_summary:
+        st.markdown(makeup_summary, unsafe_allow_html=True)
 
     tab_result, tab_standings, tab_schedule, tab_model = st.tabs(
         ["予測", "入力値", "残り日程", "前提"]
@@ -300,9 +298,8 @@ def _render_summary(
     with tab_schedule:
         st.caption(f"基準日: {start_date.isoformat()} 以降の{team_label(target_team)}戦だけを表示しています。")
         _render_table(_format_schedule(schedule, target_team))
-        makeup_summary = _makeup_summary(schedule)
         if makeup_summary:
-            st.caption(makeup_summary)
+            st.markdown(makeup_summary, unsafe_allow_html=True)
 
     with tab_model:
         st.markdown(
@@ -570,16 +567,12 @@ def _champion_date_chart(
     frame["DateLabel"] = frame["DateLabel"].fillna("").astype(str).str.strip()
     frame = _collapse_champion_date_rows(frame)
     frame = frame.sort_values("Date").reset_index(drop=True)
-    calendar = pd.DataFrame(
-        {"Date": pd.date_range(frame["Date"].min(), frame["Date"].max(), freq="D")}
-    )
-    frame = calendar.merge(frame, on="Date", how="left")
+    frame = _insert_regular_calendar_dates(frame)
     frame["Probability"] = frame["Probability"].fillna(0.0)
     frame["RawDateLabel"] = frame["DateLabel"].fillna("").astype(str).str.strip()
     frame["MakeupDays"] = frame["RawDateLabel"].map(_makeup_label_days)
-    frame["IsMultiMakeup"] = (
-        frame["RawDateLabel"].str.startswith("振替日") & (frame["MakeupDays"] >= 2)
-    )
+    frame["IsMakeupLabel"] = frame["RawDateLabel"].map(_is_makeup_label)
+    frame["IsMultiMakeup"] = frame["IsMakeupLabel"] & (frame["MakeupDays"] >= 2)
     frame["DateLabel"] = frame.apply(_chart_date_label, axis=1)
     frame["ProbabilityPct"] = frame["Probability"] * 100
     frame["ProbabilityLabel"] = frame["ProbabilityPct"].map(
@@ -687,14 +680,36 @@ def _collapse_champion_date_rows(frame: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True).sort_values("Date")
 
 
+def _insert_regular_calendar_dates(frame: pd.DataFrame) -> pd.DataFrame:
+    regular = frame[frame["DateLabel"] == ""].copy()
+    labeled = frame[frame["DateLabel"] != ""].copy()
+    frames: list[pd.DataFrame] = []
+
+    if not regular.empty:
+        calendar = pd.DataFrame(
+            {"Date": pd.date_range(regular["Date"].min(), regular["Date"].max(), freq="D")}
+        )
+        frames.append(calendar.merge(regular, on="Date", how="left"))
+    if not labeled.empty:
+        frames.append(labeled.sort_values("Date"))
+    if not frames:
+        return frame
+    return pd.concat(frames, ignore_index=True)
+
+
 def _makeup_label_days(label: object) -> int:
     text = str(label or "")
-    if not text.startswith("振替日"):
+    if not _is_makeup_label(text):
         return 0
-    match = re.search(r"残(\d+)日", text)
+    match = re.search(r"(?:残)?(\d+)(?:日|試合)", text)
     if match:
         return int(match.group(1))
     return 1
+
+
+def _is_makeup_label(label: object) -> bool:
+    text = str(label or "")
+    return text.startswith(("振替日", "自軍振替日", "他軍振替日"))
 
 
 def _gray_gradient_colors(values: pd.Series, dark_mode: bool) -> list[str]:
@@ -802,10 +817,11 @@ def _makeup_summary(schedule: pd.DataFrame) -> str:
         axis=1,
     )
     parts = [
-        f"{card}×{count}"
+        f"{card} ×{count}"
         for card, count in frame.groupby("カード", sort=False).size().items()
     ]
-    return "リーグ全体の未定カード: " + "、".join(parts)
+    lines = "<br>".join(parts)
+    return f"<div class='makeup-note'>未確定の振替試合：<br>{lines}</div>"
 
 
 def _top_dates(champion_dates: pd.DataFrame) -> pd.DataFrame:
@@ -854,7 +870,7 @@ def _schedule_date_label(row: pd.Series, target_makeup_count: int | None = None)
     label = _optional_label(row.get("DateLabel", ""))
     if is_makeup and label:
         if target_makeup_count is not None:
-            return f"振替日（対象{target_makeup_count}試合）"
+            return f"自軍振替日（{target_makeup_count}試合）"
         return label
     return _date_label(row.get("Date"))
 
@@ -1044,6 +1060,19 @@ div[data-testid="stAlert"] p {{
   line-height: 1.25;
   font-weight: 800;
   white-space: nowrap;
+}}
+.makeup-note {{
+  width: fit-content;
+  max-width: 100%;
+  margin: 0.35rem 0 0.8rem;
+  padding: 0.48rem 0.68rem;
+  border: 1px solid {border};
+  border-radius: 7px;
+  background: {surface_soft};
+  color: {muted};
+  font-size: 0.82rem;
+  line-height: 1.45;
+  font-weight: 800;
 }}
 div[data-testid="stMetric"] {{
   background: {surface};
