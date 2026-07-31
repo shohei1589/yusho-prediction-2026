@@ -41,6 +41,20 @@ TEAM_ACCENT_COLORS = {
     "E": "#991b1b",
     "L": "#1d4ed8",
 }
+TEAM_MATRIX_HEADER_COLORS = {
+    "G": "#e87722",
+    "T": "#e0b400",
+    "DB": "#1479b8",
+    "C": "#d71920",
+    "D": "#174a8b",
+    "S": "#238b57",
+    "H": "#e0b400",
+    "F": "#3276b1",
+    "M": "#9ca3af",
+    "Bs": "#174a7c",
+    "E": "#d62828",
+    "L": "#2d6aa3",
+}
 st.set_page_config(page_title="2026 優勝予測", layout="wide")
 
 
@@ -564,9 +578,6 @@ def _render_magic_analysis(
     target_team: str,
 ) -> None:
     st.subheader("全試合シナリオ確認")
-    st.caption(
-        "残り試合の結果をExcel風に入力します。球団ごとのセルには対戦相手と、その球団から見た○●△を表示します。"
-    )
     matrix_schedule = _magic_matrix_schedule(schedule)
     if matrix_schedule.empty:
         st.info("入力できる残り試合はありません。")
@@ -580,7 +591,7 @@ def _render_magic_analysis(
         f"magic_matrix_results_{league}_{target_team}_{schedule_token}_"
         f"{st.session_state[reset_counter_key]}"
     )
-    summary_col, matrix_col = st.columns([1, 3.25])
+    summary_col, matrix_col = st.columns([0.78, 4.5])
     with matrix_col:
         st.markdown("<div class='magic-matrix-marker'></div>", unsafe_allow_html=True)
         with st.container(height=720, border=True):
@@ -601,7 +612,6 @@ def _render_magic_analysis(
             schedule_token,
         )
     st.markdown("<div class='magic-team-status-title'>チーム別の判定</div>", unsafe_allow_html=True)
-    st.caption("入力した結果を反映した、相手球団ごとのマジック・優勝条件です。")
     _render_table(_format_magic_team_status_table(scenario.condition_table))
 
 
@@ -635,13 +645,14 @@ def _render_magic_game_matrix(
     header = st.columns(column_widths)
     header[0].markdown("<div class='magic-matrix-header'>日付</div>", unsafe_allow_html=True)
     for team, opponent_column, result_column in zip(teams, header[1::2], header[2::2]):
-        team_color = TEAM_ACCENT_COLORS.get(team, "#172033")
+        team_color = TEAM_MATRIX_HEADER_COLORS.get(team, "#4b5563")
+        team_text_color = "#172033" if team in {"H", "T", "M"} else "#ffffff"
         opponent_column.markdown(
-            f"<div class='magic-matrix-header magic-matrix-team-header' style='color:{team_color};'>{team}</div>",
+            f"<div class='magic-matrix-header magic-matrix-team-header' style='background:{team_color};color:{team_text_color};'>{team}</div>",
             unsafe_allow_html=True,
         )
         result_column.markdown(
-            "<div class='magic-matrix-header magic-matrix-result-header'>結果</div>",
+            f"<div class='magic-matrix-header magic-matrix-result-header' style='background:{team_color};color:{team_text_color};'>&nbsp;</div>",
             unsafe_allow_html=True,
         )
 
@@ -670,7 +681,7 @@ def _render_magic_game_matrix(
                 game_key = str(game.GameKey)
                 opponent = str(game.AwayTeam if game.HomeTeam == team else game.HomeTeam)
                 opponent_label = "未定" if opponent == "TBD" else opponent
-                opponent_color = TEAM_ACCENT_COLORS.get(opponent, "#172033")
+                opponent_color = TEAM_MATRIX_HEADER_COLORS.get(opponent, "#172033")
                 with opponent_column:
                     st.markdown(
                         f"<div class='magic-matrix-opponent' style='color:{opponent_color};'>{opponent_label}</div>",
@@ -763,6 +774,7 @@ def _render_magic_scenario_result(
     target_team: str,
     schedule_token: str,
 ) -> None:
+    st.markdown("<div class='magic-summary-marker'></div>", unsafe_allow_html=True)
     st.markdown("<div class='magic-summary-title'>判定サマリー</div>", unsafe_allow_html=True)
     metric_cols = st.columns(1)
     metric_cols[0].metric("優勝確認", "優勝" if scenario.is_clinched else "未確定")
@@ -777,16 +789,6 @@ def _render_magic_scenario_result(
     ):
         st.session_state[reset_counter_key] += 1
         st.rerun()
-    st.caption(
-        "○=勝、●=敗、△=引分。リーグ内対戦は相手側にも自動反映されます。"
-    )
-    st.caption("球団欄はExcelに合わせてNPBの略称で表示しています。")
-    st.caption(
-        "マジック数は、対象球団が追加で勝つ必要のある最小勝数を、相手球団の残り試合を含む最高勝率との比較で算出したアプリ内指標です。NPB公式発表のマジック数と一致しない場合があります。"
-    )
-    st.caption(
-        "点灯判定は、対象球団が残りの直接対決を全敗し、それ以外を勝利、各相手球団が残り試合を全勝しても、対象球団の勝率が上回るかで確認しています。"
-    )
 
 
 def _format_magic_team_status_table(frame: pd.DataFrame) -> pd.DataFrame:
@@ -797,7 +799,7 @@ def _format_magic_team_status_table(frame: pd.DataFrame) -> pd.DataFrame:
     formatted = frame.copy()
     formatted["相手球団"] = formatted["Team"].map(
         lambda team: (
-            f"<span style='color:{TEAM_ACCENT_COLORS.get(str(team), '#172033')};"
+            f"<span style='color:{TEAM_MATRIX_HEADER_COLORS.get(str(team), '#172033')};"
             f"font-weight:900'>{team_label(str(team))}</span>"
         )
     )
@@ -1311,6 +1313,7 @@ def _apply_style(dark_mode: bool) -> None:
         button_bg = "#ffffff"
         primary = "#2f6f8f"
         shadow = "0 12px 28px rgba(32, 50, 70, 0.10)"
+    matrix_border = "#111827" if not dark_mode else "#94a3b8"
 
     st.markdown(
         f"""
@@ -1428,31 +1431,54 @@ div[data-testid="stAlert"] p {{
   position: sticky;
   top: 0;
   z-index: 20;
-  min-height: 38px;
-  padding: 0.38rem 0.15rem;
-  border-top: 1px solid {border};
-  border-bottom: 1px solid {border};
+  min-height: 32px;
+  padding: 0.16rem 0.12rem;
+  border-top: 1px solid {matrix_border};
+  border-bottom: 1px solid {matrix_border};
+  border-left: 1px solid {matrix_border};
   background: {surface_soft};
   color: {text};
   text-align: center;
-  font-size: 0.9rem;
+  font-size: 0.84rem;
   line-height: 1.15;
   font-weight: 900;
 }}
 .magic-matrix-team-header {{
-  font-size: 1.12rem;
-  letter-spacing: 0.02em;
+  font-size: 1rem;
+  letter-spacing: 0.04em;
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.42);
 }}
 .magic-matrix-result-header {{
-  color: {muted};
-  font-size: 0.74rem;
+  font-size: 0.72rem;
 }}
 .magic-summary-title {{
-  margin: 0 0 0.6rem;
+  margin: 0 0 0.35rem;
   color: {text};
-  font-size: 1.08rem;
+  font-size: 0.94rem;
   font-weight: 900;
+}}
+.magic-summary-marker + div[data-testid="stVerticalBlock"] {{
+  max-width: 220px;
+}}
+.magic-summary-marker ~ div[data-testid="stMetric"] {{
+  max-width: 220px;
+}}
+div[data-testid="stVerticalBlock"]:has(.magic-summary-marker) div[data-testid="stMetric"] {{
+  margin-bottom: 0.35rem;
+  padding: 6px 8px;
+  border-radius: 6px;
+  box-shadow: none;
+}}
+div[data-testid="stVerticalBlock"]:has(.magic-summary-marker) div[data-testid="stMetricLabel"] {{
+  font-size: 0.72rem;
+}}
+div[data-testid="stVerticalBlock"]:has(.magic-summary-marker) div[data-testid="stMetricValue"] {{
+  font-size: 1.12rem;
+}}
+div[data-testid="stVerticalBlock"]:has(.magic-summary-marker) button {{
+  min-height: 28px;
+  padding: 0.15rem 0.35rem;
+  font-size: 0.78rem;
 }}
 .magic-team-status-title {{
   margin: 1.25rem 0 0.35rem;
@@ -1467,27 +1493,28 @@ div[data-testid="stAlert"] p {{
   min-width: 900px;
 }}
 .magic-matrix-date {{
-  min-height: 52px;
-  padding: 0.5rem 0.15rem;
-  border-bottom: 1px solid {border};
+  min-height: 28px;
+  padding: 0.22rem 0.12rem;
+  border-bottom: 1px solid {matrix_border};
   color: {text};
-  font-size: 0.72rem;
+  font-size: 0.76rem;
+  line-height: 1.15;
   font-weight: 800;
   text-align: center;
 }}
 .magic-matrix-opponent {{
-  min-height: 32px;
-  padding: 0.3rem 0.1rem 0;
+  min-height: 28px;
+  padding: 0.2rem 0.1rem 0;
   color: {text};
-  font-size: 0.88rem;
+  font-size: 0.9rem;
   line-height: 1.15;
   font-weight: 800;
   text-align: center;
 }}
 .magic-matrix-empty {{
-  min-height: 52px;
-  padding: 0.7rem 0.1rem;
-  border-bottom: 1px solid {border};
+  min-height: 28px;
+  padding: 0.2rem 0.1rem;
+  border-bottom: 1px solid {matrix_border};
   color: {muted};
   text-align: center;
 }}
@@ -1510,8 +1537,34 @@ div[data-testid="stSelectbox"] [data-baseweb="select"] > div {{
 div[data-testid="stVerticalBlock"]:has(.magic-matrix-marker) {{
   overflow-x: auto;
 }}
+div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header),
+div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) {{
+  column-gap: 0 !important;
+  align-items: stretch;
+}}
+div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header) > div[data-testid="column"],
+div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) > div[data-testid="column"] {{
+  box-sizing: border-box;
+  min-width: 0;
+  margin: 0 !important;
+  padding: 0 !important;
+  border-left: 1px solid {matrix_border};
+  border-bottom: 1px solid {matrix_border};
+}}
+div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header) > div[data-testid="column"]:last-child,
+div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) > div[data-testid="column"]:last-child {{
+  border-right: 1px solid {matrix_border};
+}}
+div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header) > div[data-testid="column"]:nth-child(2n+3),
+div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) > div[data-testid="column"]:nth-child(2n+3) {{
+  border-right: 2px solid {matrix_border};
+}}
 div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-header) {{
   overflow: auto !important;
+  border: 1px solid {matrix_border} !important;
+  border-radius: 0 !important;
+  background: {surface} !important;
+  box-shadow: none !important;
 }}
 div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-header) > div {{
   overflow: visible !important;
@@ -1523,13 +1576,19 @@ div[data-testid="stVerticalBlock"]:has(.magic-matrix-header) > div[data-testid="
   background: {surface_soft};
 }}
 div[data-testid="stVerticalBlock"]:has(.magic-matrix-header) div[data-testid="stSelectbox"] > div {{
-  min-height: 38px;
+  min-height: 28px;
+}}
+div[data-testid="stVerticalBlock"]:has(.magic-matrix-header) div[data-testid="stSelectbox"] {{
+  margin-bottom: 0 !important;
 }}
 div[data-testid="stVerticalBlock"]:has(.magic-matrix-header) div[data-testid="stSelectbox"] [data-baseweb="select"] > div {{
-  min-height: 38px;
-  padding: 0 0.2rem;
-  font-size: 1.05rem;
-  line-height: 1.1;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 1rem;
+  line-height: 1.05;
   font-weight: 900;
   text-align: center;
 }}
