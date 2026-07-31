@@ -680,13 +680,12 @@ def _render_magic_game_matrix(
                 widget_key = _magic_result_widget_key(result_state_key, game_key, team)
                 current_result = str(results.get(game_key, "未入力"))
                 default_symbol = _result_symbol_for_team(current_result, team, game.HomeTeam)
-                if widget_key not in st.session_state:
+                if st.session_state.get(widget_key) not in {"", "○", "△", "●"}:
                     st.session_state[widget_key] = default_symbol
                 with result_column:
-                    st.markdown("<div class='magic-matrix-result-marker'></div>", unsafe_allow_html=True)
                     st.selectbox(
                         "結果",
-                        options=["未入力", "○", "△", "●"],
+                        options=["", "○", "△", "●"],
                         key=widget_key,
                         label_visibility="collapsed",
                         on_change=_sync_magic_matrix_result,
@@ -734,7 +733,7 @@ def _sync_magic_matrix_result(
     widget_key: str,
     league_teams_for_matrix: tuple[str, ...],
 ) -> None:
-    symbol = str(st.session_state.get(widget_key, "未入力"))
+    symbol = str(st.session_state.get(widget_key, ""))
     if symbol == "○":
         result = "ホーム勝" if team == home else "ビジター勝"
     elif symbol == "●":
@@ -765,7 +764,7 @@ def _result_symbol_for_team(result: str, team: str, home: str) -> str:
         return "○" if team == home else "●"
     if result == "ビジター勝":
         return "●" if team == home else "○"
-    return "未入力"
+    return ""
 
 
 def _magic_schedule_token(frame: pd.DataFrame) -> str:
@@ -1606,19 +1605,61 @@ div[data-testid="stVerticalBlock"]:has(.magic-matrix-header) div[data-testid="st
 div[data-testid="stVerticalBlock"]:has(.magic-matrix-header) div[data-testid="stSelectbox"] {{
   margin-bottom: 0 !important;
 }}
-div[data-testid="column"]:has(.magic-matrix-result-marker) {{
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-date) div[data-testid="column"] > div[data-testid="stVerticalBlock"] {{
+  gap: 0 !important;
+  padding: 0 !important;
+}}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-date) .magic-matrix-date,
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-date) .magic-matrix-opponent,
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-date) .magic-matrix-empty {{
+  min-height: 40px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-date) div[data-testid="column"]:has(div[data-testid="stSelectbox"]) {{
   box-sizing: border-box;
   min-width: 0;
   margin: 0 !important;
   padding: 0 !important;
   border: 1px solid {matrix_border};
 }}
-.magic-matrix-result-marker {{
-  display: none;
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-date) div[data-testid="column"]:has(div[data-testid="stSelectbox"]) div[data-testid="stSelectbox"] {{
+  margin: 0 !important;
+  padding: 0 !important;
 }}
-div[data-testid="column"]:has(.magic-matrix-result-marker) [data-baseweb="select"] > div {{
-  border: 1px solid {matrix_border};
-  border-radius: 0;
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-date) div[data-testid="column"]:has(div[data-testid="stSelectbox"]) div[data-testid="stSelectbox"] > div {{
+  min-height: 40px !important;
+}}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-date) div[data-testid="column"]:has(div[data-testid="stSelectbox"]) [data-baseweb="select"] > div {{
+  min-height: 40px !important;
+  border: 1px solid {matrix_border} !important;
+  border-radius: 0 !important;
+}}
+div[data-testid="stVerticalBlock"]:has(.magic-matrix-date) {{
+  gap: 0 !important;
+}}
+div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) > div[data-testid="column"] > div[data-testid="stVerticalBlock"] {{
+  gap: 0 !important;
+  padding: 0 !important;
+}}
+div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) > div[data-testid="column"]:has(div[data-testid="stSelectbox"]) [data-baseweb="select"] > div {{
+  min-height: 40px !important;
+  border: 1px solid {matrix_border} !important;
+  border-radius: 0 !important;
+}}
+div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) > div[data-testid="column"]:has(div[data-testid="stSelectbox"]) div[data-testid="stSelectbox"] {{
+  margin: 0 !important;
+  padding: 0 !important;
+}}
+div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) div[data-testid="stSelectbox"] {{
+  box-sizing: border-box;
+  min-height: 40px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 1px solid {matrix_border} !important;
+  background: {surface};
 }}
 div[data-testid="stVerticalBlock"]:has(.magic-matrix-header) div[data-testid="stSelectbox"] [data-baseweb="select"] > div {{
   min-height: 28px;
