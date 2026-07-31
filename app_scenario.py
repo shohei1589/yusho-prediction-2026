@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 import os
 import re
+import time
 
 import pandas as pd
 import plotly.express as px
@@ -25,6 +26,8 @@ LEAGUE_LABELS = {
     PACIFIC: "パ・リーグ",
     CENTRAL: "セ・リーグ",
 }
+
+MAGIC_INPUT_DEBOUNCE_SECONDS = 2.0
 LEAGUE_BY_LABEL = {label: code for code, label in LEAGUE_LABELS.items()}
 TEAM_ACCENT_COLORS = {
     "G": "#f97316",
@@ -615,23 +618,73 @@ def _render_magic_analysis(
     result_state_key = (
         f"magic_matrix_results_{year}_{league}_{target_team}"
     )
+    scenario_state_key = (
+        f"magic_matrix_scenario_{year}_{league}_{target_team}"
+    )
+    pending_updated_key = (
+        f"magic_matrix_pending_updated_{year}_{league}_{target_team}"
+    )
     revision_key = f"magic_matrix_revision_{year}_{league}_{target_team}"
     st.session_state.setdefault(revision_key, 0)
-    widget_prefix = f"{result_state_key}_{st.session_state[revision_key]}"
-    results = dict(st.session_state.get(result_state_key, {}))
-    scenario = analyze_magic_scenario(
+    st.session_state.setdefault(pending_updated_key, 0.0)
+    _render_magic_live_content(
         standings,
         remaining_matrix_schedule,
+        matrix_schedule,
+        full_schedule,
+        year,
         league,
         target_team,
-        results,
-        full_schedule,
+        result_state_key,
+        scenario_state_key,
+        pending_updated_key,
+        revision_key,
+        show_past_key,
     )
+
+
+@st.fragment(run_every=0.5)
+def _render_magic_live_content(
+    standings: pd.DataFrame,
+    remaining_matrix_schedule: pd.DataFrame,
+    matrix_schedule: pd.DataFrame,
+    full_schedule: pd.DataFrame,
+    year: int,
+    league: str,
+    target_team: str,
+    result_state_key: str,
+    scenario_state_key: str,
+    pending_updated_key: str,
+    revision_key: str,
+    show_past_key: str,
+) -> None:
+    results = dict(st.session_state.get(result_state_key, {}))
+    scenario = st.session_state.get(scenario_state_key)
+    pending_updated_at = float(st.session_state.get(pending_updated_key, 0.0) or 0.0)
+    calculation_due = (
+        pending_updated_at > 0
+        and time.time() - pending_updated_at >= MAGIC_INPUT_DEBOUNCE_SECONDS
+    )
+    if scenario is None or calculation_due:
+        scenario = analyze_magic_scenario(
+            standings,
+            remaining_matrix_schedule,
+            league,
+            target_team,
+            results,
+            full_schedule,
+        )
+        st.session_state[scenario_state_key] = scenario
+        st.session_state[pending_updated_key] = 0.0
+
+    widget_prefix = f"{result_state_key}_{st.session_state[revision_key]}"
     summary_col, matrix_col = st.columns([0.78, 4.5])
     with summary_col:
         _render_magic_scenario_result(
             scenario,
             result_state_key,
+            scenario_state_key,
+            pending_updated_key,
             revision_key,
             year,
             league,
@@ -653,6 +706,8 @@ def _render_magic_analysis(
                 matrix_schedule,
                 result_state_key,
                 widget_prefix,
+                pending_updated_key,
+                revision_key,
                 league,
             )
     st.markdown("<div class='magic-team-status-title'>チーム別の判定</div>", unsafe_allow_html=True)
@@ -711,6 +766,8 @@ def _render_magic_game_matrix(
     schedule: pd.DataFrame,
     result_state_key: str,
     widget_prefix: str,
+    pending_updated_key: str,
+    revision_key: str,
     league: str,
 ) -> dict[str, str]:
     teams = league_teams(league)
@@ -773,15 +830,12 @@ def _render_magic_game_matrix(
                         on_change=_sync_magic_matrix_result,
                         args=(
                             result_state_key,
+                            pending_updated_key,
+                            revision_key,
                             game_key,
                             team,
                             str(game.HomeTeam),
                             widget_key,
-                            _magic_result_widget_key(
-                                widget_prefix,
-                                game_key,
-                                opponent,
-                            ),
                             opponent,
                         ),
                     )
@@ -823,11 +877,12 @@ def _magic_result_widget_key(result_state_key: str, game_key: str, team: str) ->
 
 def _sync_magic_matrix_result(
     result_state_key: str,
+    pending_updated_key: str,
+    revision_key: str,
     game_key: str,
     team: str,
     home: str,
     widget_key: str,
-    opponent_widget_key: str,
     opponent_team: str,
 ) -> None:
     symbol = str(st.session_state.get(widget_key, "未"))
@@ -835,15 +890,19 @@ def _sync_magic_matrix_result(
     results = dict(st.session_state.get(result_state_key, {}))
     if result == "未入力":
         results.pop(game_key, None)
-        st.session_state[opponent_widget_key] = "未"
     else:
         results[game_key] = result
-        st.session_state[opponent_widget_key] = _result_symbol_for_team(
-            result,
-            opponent_team,
-            home,
-        )
     st.session_state[result_state_key] = results
+    st.session_state[pending_updated_key] = time.time()
+    next_revision = int(st.session_state.get(revision_key, 0)) + 1
+    st.session_state[revision_key] = next_revision
+    next_prefix = f"{result_state_key}_{next_revision}"
+    st.session_state[_magic_result_widget_key(next_prefix, game_key, team)] = symbol
+    st.session_state[_magic_result_widget_key(next_prefix, game_key, opponent_team)] = (
+        _result_symbol_for_team(result, opponent_team, home)
+        if result != "未入力"
+        else "未"
+    )
 
 
 def _game_result_from_symbol(symbol: str, team: str, home: str) -> str:
@@ -869,6 +928,8 @@ def _result_symbol_for_team(result: str, team: str, home: str) -> str:
 def _render_magic_scenario_result(
     scenario: MagicScenarioAnalysis,
     result_state_key: str,
+    scenario_state_key: str,
+    pending_updated_key: str,
     revision_key: str,
     year: int,
     league: str,
@@ -888,6 +949,8 @@ def _render_magic_scenario_result(
         use_container_width=True,
     ):
         st.session_state[result_state_key] = {}
+        st.session_state[scenario_state_key] = None
+        st.session_state[pending_updated_key] = 0.0
         st.session_state[revision_key] += 1
         st.rerun()
 

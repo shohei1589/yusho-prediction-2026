@@ -1,5 +1,5 @@
 pandas
 plotly
 requests
-streamlit
+streamlit>=1.37
 # Force a full Community Cloud rebuild after the Excel-style magic matrix update.
