@@ -670,9 +670,10 @@ def _render_magic_game_matrix(
                 game_key = str(game.GameKey)
                 opponent = str(game.AwayTeam if game.HomeTeam == team else game.HomeTeam)
                 opponent_label = "未定" if opponent == "TBD" else opponent
+                opponent_color = TEAM_ACCENT_COLORS.get(opponent, "#172033")
                 with opponent_column:
                     st.markdown(
-                        f"<div class='magic-matrix-opponent'>{opponent_label}</div>",
+                        f"<div class='magic-matrix-opponent' style='color:{opponent_color};'>{opponent_label}</div>",
                         unsafe_allow_html=True,
                     )
                 widget_key = _magic_result_widget_key(result_state_key, game_key, team)
