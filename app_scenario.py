@@ -600,6 +600,9 @@ def _render_magic_analysis(
             target_team,
             schedule_token,
         )
+    st.markdown("<div class='magic-team-status-title'>チーム別の判定</div>", unsafe_allow_html=True)
+    st.caption("入力した結果を反映した、相手球団ごとのマジック・優勝条件です。")
+    _render_table(_format_magic_team_status_table(scenario.condition_table))
 
 
 def _magic_matrix_schedule(schedule: pd.DataFrame) -> pd.DataFrame:
@@ -632,8 +635,9 @@ def _render_magic_game_matrix(
     header = st.columns(column_widths)
     header[0].markdown("<div class='magic-matrix-header'>日付</div>", unsafe_allow_html=True)
     for team, opponent_column, result_column in zip(teams, header[1::2], header[2::2]):
+        team_color = TEAM_ACCENT_COLORS.get(team, "#172033")
         opponent_column.markdown(
-            f"<div class='magic-matrix-header'>{team}</div>",
+            f"<div class='magic-matrix-header magic-matrix-team-header' style='color:{team_color};'>{team}</div>",
             unsafe_allow_html=True,
         )
         result_column.markdown(
@@ -782,6 +786,28 @@ def _render_magic_scenario_result(
     st.caption(
         "点灯判定は、対象球団が残りの直接対決を全敗し、それ以外を勝利、各相手球団が残り試合を全勝しても、対象球団の勝率が上回るかで確認しています。"
     )
+
+
+def _format_magic_team_status_table(frame: pd.DataFrame) -> pd.DataFrame:
+    columns = ["相手球団", "マジック状況", "優勝状況", "必要勝利数"]
+    if frame.empty:
+        return pd.DataFrame(columns=columns)
+
+    formatted = frame.copy()
+    formatted["相手球団"] = formatted["Team"].map(
+        lambda team: (
+            f"<span style='color:{TEAM_ACCENT_COLORS.get(str(team), '#172033')};"
+            f"font-weight:900'>{team_label(str(team))}</span>"
+        )
+    )
+    formatted["マジック状況"] = formatted["IsLit"].map(
+        lambda value: "点灯条件クリア" if bool(value) else "未点灯"
+    )
+    formatted["優勝状況"] = formatted["IsClinched"].map(
+        lambda value: "優勝条件クリア" if bool(value) else "未達"
+    )
+    formatted["必要勝利数"] = formatted["NeededWins"].map(_needed_wins_display)
+    return formatted[columns]
 
 
 def _magic_date_display(value: pd.Timestamp | None) -> str:
@@ -1400,23 +1426,35 @@ div[data-testid="stAlert"] p {{
 .magic-matrix-header {{
   position: sticky;
   top: 0;
-  z-index: 10;
-  min-height: 28px;
-  padding: 0.22rem 0.15rem;
+  z-index: 20;
+  min-height: 38px;
+  padding: 0.38rem 0.15rem;
   border-top: 1px solid {border};
   border-bottom: 1px solid {border};
   background: {surface_soft};
   color: {text};
   text-align: center;
-  font-size: 0.78rem;
+  font-size: 0.9rem;
+  line-height: 1.15;
   font-weight: 900;
+}}
+.magic-matrix-team-header {{
+  font-size: 1.12rem;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.42);
 }}
 .magic-matrix-result-header {{
   color: {muted};
-  font-size: 0.68rem;
+  font-size: 0.74rem;
 }}
 .magic-summary-title {{
   margin: 0 0 0.6rem;
+  color: {text};
+  font-size: 1.08rem;
+  font-weight: 900;
+}}
+.magic-team-status-title {{
+  margin: 1.25rem 0 0.35rem;
   color: {text};
   font-size: 1.08rem;
   font-weight: 900;
@@ -1437,10 +1475,11 @@ div[data-testid="stAlert"] p {{
   text-align: center;
 }}
 .magic-matrix-opponent {{
-  min-height: 20px;
-  padding: 0.1rem 0.1rem 0;
-  color: {muted};
-  font-size: 0.7rem;
+  min-height: 32px;
+  padding: 0.3rem 0.1rem 0;
+  color: {text};
+  font-size: 0.88rem;
+  line-height: 1.15;
   font-weight: 800;
   text-align: center;
 }}
@@ -1469,6 +1508,29 @@ div[data-testid="stSelectbox"] [data-baseweb="select"] > div {{
 }}
 div[data-testid="stVerticalBlock"]:has(.magic-matrix-marker) {{
   overflow-x: auto;
+}}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-header) {{
+  overflow: auto !important;
+}}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-header) > div {{
+  overflow: visible !important;
+}}
+div[data-testid="stVerticalBlock"]:has(.magic-matrix-header) > div[data-testid="stHorizontalBlock"]:first-child {{
+  position: sticky;
+  top: 0;
+  z-index: 25;
+  background: {surface_soft};
+}}
+div[data-testid="stVerticalBlock"]:has(.magic-matrix-header) div[data-testid="stSelectbox"] > div {{
+  min-height: 38px;
+}}
+div[data-testid="stVerticalBlock"]:has(.magic-matrix-header) div[data-testid="stSelectbox"] [data-baseweb="select"] > div {{
+  min-height: 38px;
+  padding: 0 0.2rem;
+  font-size: 1.05rem;
+  line-height: 1.1;
+  font-weight: 900;
+  text-align: center;
 }}
 .makeup-note {{
   width: fit-content;
