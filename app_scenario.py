@@ -206,6 +206,8 @@ def main() -> None:
         displayed_daily_opponents = stored.get("daily_opponents", daily_opponents)
         if stored["signature"] != scenario_signature:
             st.warning("入力が変更されています。結果を更新するには「シミュレーション実行」を押してください。")
+            displayed_schedule = completed_schedule
+            displayed_daily_opponents = daily_opponents
     except Exception as exc:
         st.error("入力値の変換または計算に失敗しました。")
         st.exception(exc)
@@ -594,6 +596,7 @@ def _render_magic_analysis(
     summary_col, matrix_col = st.columns([0.78, 4.5])
     with matrix_col:
         st.markdown("<div class='magic-matrix-marker'></div>", unsafe_allow_html=True)
+        _render_magic_matrix_header(league)
         with st.container(height=720, border=True):
             results = _render_magic_game_matrix(matrix_schedule, result_state_key, league)
     scenario = analyze_magic_scenario(
@@ -642,19 +645,6 @@ def _render_magic_game_matrix(
     schedule_by_date = schedule.groupby("Date", sort=True)
 
     column_widths = [1.1] + [1.0, 0.72] * len(teams)
-    header = st.columns(column_widths)
-    header[0].markdown("<div class='magic-matrix-header'>日付</div>", unsafe_allow_html=True)
-    for team, opponent_column, result_column in zip(teams, header[1::2], header[2::2]):
-        team_color = TEAM_MATRIX_HEADER_COLORS.get(team, "#4b5563")
-        team_text_color = "#172033" if team in {"H", "T", "M"} else "#ffffff"
-        opponent_column.markdown(
-            f"<div class='magic-matrix-header magic-matrix-team-header' style='background:{team_color};color:{team_text_color};'>{team}</div>",
-            unsafe_allow_html=True,
-        )
-        result_column.markdown(
-            f"<div class='magic-matrix-header magic-matrix-result-header' style='background:{team_color};color:{team_text_color};'>&nbsp;</div>",
-            unsafe_allow_html=True,
-        )
 
     for game_date, group in schedule_by_date:
         row_columns = st.columns(column_widths)
@@ -693,6 +683,7 @@ def _render_magic_game_matrix(
                 if widget_key not in st.session_state:
                     st.session_state[widget_key] = default_symbol
                 with result_column:
+                    st.markdown("<div class='magic-matrix-result-marker'></div>", unsafe_allow_html=True)
                     st.selectbox(
                         "結果",
                         options=["未入力", "○", "△", "●"],
@@ -710,6 +701,24 @@ def _render_magic_game_matrix(
                         ),
                     )
     return {str(key): str(value) for key, value in results.items()}
+
+
+def _render_magic_matrix_header(league: str) -> None:
+    teams = league_teams(league)
+    column_widths = [1.1] + [1.0, 0.72] * len(teams)
+    header = st.columns(column_widths)
+    header[0].markdown("<div class='magic-matrix-header'>日付</div>", unsafe_allow_html=True)
+    for team, opponent_column, result_column in zip(teams, header[1::2], header[2::2]):
+        team_color = TEAM_MATRIX_HEADER_COLORS.get(team, "#4b5563")
+        team_text_color = "#172033" if team in {"H", "T", "M"} else "#ffffff"
+        opponent_column.markdown(
+            f"<div class='magic-matrix-header magic-matrix-team-header' style='background:{team_color};color:{team_text_color};'>{team}</div>",
+            unsafe_allow_html=True,
+        )
+        result_column.markdown(
+            f"<div class='magic-matrix-header magic-matrix-result-header' style='background:{team_color};color:{team_text_color};'>&nbsp;</div>",
+            unsafe_allow_html=True,
+        )
 
 
 def _magic_result_widget_key(result_state_key: str, game_key: str, team: str) -> str:
@@ -1433,9 +1442,7 @@ div[data-testid="stAlert"] p {{
   z-index: 20;
   min-height: 32px;
   padding: 0.16rem 0.12rem;
-  border-top: 1px solid {matrix_border};
-  border-bottom: 1px solid {matrix_border};
-  border-left: 1px solid {matrix_border};
+  border: 1px solid {matrix_border};
   background: {surface_soft};
   color: {text};
   text-align: center;
@@ -1495,7 +1502,7 @@ div[data-testid="stVerticalBlock"]:has(.magic-summary-marker) button {{
 .magic-matrix-date {{
   min-height: 28px;
   padding: 0.22rem 0.12rem;
-  border-bottom: 1px solid {matrix_border};
+  border: 1px solid {matrix_border};
   color: {text};
   font-size: 0.76rem;
   line-height: 1.15;
@@ -1505,6 +1512,7 @@ div[data-testid="stVerticalBlock"]:has(.magic-summary-marker) button {{
 .magic-matrix-opponent {{
   min-height: 28px;
   padding: 0.2rem 0.1rem 0;
+  border: 1px solid {matrix_border};
   color: {text};
   font-size: 0.9rem;
   line-height: 1.15;
@@ -1514,7 +1522,7 @@ div[data-testid="stVerticalBlock"]:has(.magic-summary-marker) button {{
 .magic-matrix-empty {{
   min-height: 28px;
   padding: 0.2rem 0.1rem;
-  border-bottom: 1px solid {matrix_border};
+  border: 1px solid {matrix_border};
   color: {muted};
   text-align: center;
 }}
@@ -1535,12 +1543,19 @@ div[data-testid="stSelectbox"] [data-baseweb="select"] > div {{
   text-align: center;
 }}
 div[data-testid="stVerticalBlock"]:has(.magic-matrix-marker) {{
-  overflow-x: auto;
+  overflow: visible;
 }}
 div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header),
 div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) {{
   column-gap: 0 !important;
   align-items: stretch;
+}}
+div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header) {{
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  min-width: 900px;
+  background: {surface};
 }}
 div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header) > div[data-testid="column"],
 div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) > div[data-testid="column"] {{
@@ -1566,7 +1581,17 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-header) {{
   background: {surface} !important;
   box-shadow: none !important;
 }}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-date) {{
+  overflow: auto !important;
+  border: 1px solid {matrix_border} !important;
+  border-radius: 0 !important;
+  background: {surface} !important;
+  box-shadow: none !important;
+}}
 div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-header) > div {{
+  overflow: visible !important;
+}}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-date) > div {{
   overflow: visible !important;
 }}
 div[data-testid="stVerticalBlock"]:has(.magic-matrix-header) > div[data-testid="stHorizontalBlock"]:first-child {{
@@ -1580,6 +1605,20 @@ div[data-testid="stVerticalBlock"]:has(.magic-matrix-header) div[data-testid="st
 }}
 div[data-testid="stVerticalBlock"]:has(.magic-matrix-header) div[data-testid="stSelectbox"] {{
   margin-bottom: 0 !important;
+}}
+div[data-testid="column"]:has(.magic-matrix-result-marker) {{
+  box-sizing: border-box;
+  min-width: 0;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 1px solid {matrix_border};
+}}
+.magic-matrix-result-marker {{
+  display: none;
+}}
+div[data-testid="column"]:has(.magic-matrix-result-marker) [data-baseweb="select"] > div {{
+  border: 1px solid {matrix_border};
+  border-radius: 0;
 }}
 div[data-testid="stVerticalBlock"]:has(.magic-matrix-header) div[data-testid="stSelectbox"] [data-baseweb="select"] > div {{
   min-height: 28px;
