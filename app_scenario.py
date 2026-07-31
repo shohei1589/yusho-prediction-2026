@@ -944,11 +944,31 @@ def _render_magic_scenario_result(
 ) -> None:
     st.markdown("<div class='magic-summary-marker'></div>", unsafe_allow_html=True)
     st.markdown("<div class='magic-summary-title'>判定サマリー</div>", unsafe_allow_html=True)
-    metric_cols = st.columns(1)
-    metric_cols[0].metric("優勝確認", "優勝" if scenario.is_clinched else "未確定")
-    metric_cols[0].metric("マジック点灯確認", "点灯" if scenario.is_lit else "未点灯")
+    champion_value = "優勝決定！" if scenario.is_clinched else "未確定"
+    champion_class = (
+        "magic-summary-value magic-summary-value-champion"
+        if scenario.is_clinched
+        else "magic-summary-value"
+    )
+    magic_status = "点灯" if scenario.is_lit else "未点灯"
     magic_number = scenario.magic_number
     magic_display = "—" if magic_number is None or not scenario.is_lit else f"M{magic_number}"
+    magic_class = (
+        "magic-summary-value magic-summary-value-alert"
+        if scenario.is_lit
+        else "magic-summary-value"
+    )
+    st.markdown(
+        "<div class='magic-summary-cards'>"
+        f"<div class='magic-summary-card'><div class='magic-summary-card-label'>優勝確認</div>"
+        f"<div class='{champion_class}'>{champion_value}</div></div>"
+        f"<div class='magic-summary-card'><div class='magic-summary-card-label'>マジック点灯確認</div>"
+        f"<div class='{magic_class}'>{magic_status}</div></div>"
+        f"<div class='magic-summary-card'><div class='magic-summary-card-label'>マジック数</div>"
+        f"<div class='{magic_class}'>{magic_display}</div></div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
     metric_cols[0].metric("マジック数", magic_display)
     if st.button(
         "結果入力をリセット",
@@ -1064,6 +1084,10 @@ def _render_magic_analysis_with_apply(
             target_team,
         )
     with matrix_col:
+        st.markdown(
+            "<div class='magic-matrix-header-host'></div>",
+            unsafe_allow_html=True,
+        )
         _render_magic_matrix_header(league)
         with st.container(height=720, border=True):
             _render_magic_game_matrix_draft(
@@ -1917,6 +1941,44 @@ div[data-testid="stAlert"] p {{
   font-size: 0.94rem;
   font-weight: 900;
 }}
+.magic-summary-cards {{
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 100%;
+  max-width: 220px;
+}}
+.magic-summary-card {{
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 66px;
+  padding: 0.55rem 0.62rem;
+  border: 1px solid {border};
+  border-radius: 7px;
+  background: {surface};
+  box-shadow: {shadow};
+}}
+.magic-summary-card-label {{
+  color: {muted};
+  font-size: 0.72rem;
+  line-height: 1.2;
+  font-weight: 800;
+}}
+.magic-summary-value {{
+  margin-top: 0.22rem;
+  color: {text};
+  font-size: 1.16rem;
+  line-height: 1.1;
+  font-weight: 900;
+}}
+.magic-summary-value-alert,
+.magic-summary-value-champion {{
+  color: #d71920;
+}}
+.magic-summary-value-champion {{
+  font-size: 1.22rem;
+  letter-spacing: 0.03em;
+}}
 .magic-summary-marker + div[data-testid="stVerticalBlock"] {{
   max-width: 220px;
 }}
@@ -2024,11 +2086,14 @@ div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) {{
   padding-right: 0 !important;
 }}
 div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header) {{
+  box-sizing: border-box;
   position: sticky !important;
   top: 0 !important;
   z-index: 1000 !important;
   isolation: isolate;
   min-height: 40px !important;
+  padding-left: 17px !important;
+  padding-right: 26px !important;
   background: {surface} !important;
   box-shadow: 0 1px 0 {matrix_border};
 }}
@@ -2700,6 +2765,10 @@ button[kind="primary"] {{
   .mobile-table th,
   .mobile-table td {{
     padding: 0.44rem 0.24rem;
+  }}
+  div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header) {{
+    padding-left: 8px !important;
+    padding-right: 8px !important;
   }}
 }}
 </style>
