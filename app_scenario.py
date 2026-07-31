@@ -341,6 +341,8 @@ def _render_summary(
 - 残り試合はモンテカルロ法で多数回シミュレーションし、優勝確率と優勝確定日分布を推定します。
 - 各試合の勝敗確率は、両チームの今後想定勝率からLog5風のオッズ比で計算します。
 - 引分の発生、先発投手、球場、移動、故障者、雨天中止の追加発生はモデルに含めていません。
+- マジックは、各相手が残り試合で最大限勝つケースを含めても、対象球団が優勝条件を満たすために必要な勝利数です。相手ごとの必要勝利数の最大値をマジック数として表示します。
+- 勝率が同率になる場合は、残りの直接対決を対象球団の敗戦としても、公式の過去結果と入力済み結果を合算した直接対戦成績が対象球団優位であれば条件クリアと判定します。
 - 優勝確定日は、各日終了時点で「対象チームの残り試合を含めた最低勝率」が「他チームの残り試合を含めた最高勝率」を上回る最初の日として判定しています。
 """
         )
@@ -610,13 +612,12 @@ def _render_magic_analysis(
     else:
         matrix_schedule = remaining_matrix_schedule
 
-    reset_counter_key = f"magic_game_reset_{year}_{league}_{target_team}"
-    if reset_counter_key not in st.session_state:
-        st.session_state[reset_counter_key] = 0
     result_state_key = (
-        f"magic_matrix_results_{year}_{league}_{target_team}_"
-        f"{st.session_state[reset_counter_key]}"
+        f"magic_matrix_results_{year}_{league}_{target_team}"
     )
+    revision_key = f"magic_matrix_revision_{year}_{league}_{target_team}"
+    st.session_state.setdefault(revision_key, 0)
+    widget_prefix = f"{result_state_key}_{st.session_state[revision_key]}"
     results = dict(st.session_state.get(result_state_key, {}))
     scenario = analyze_magic_scenario(
         standings,
@@ -624,12 +625,14 @@ def _render_magic_analysis(
         league,
         target_team,
         results,
+        full_schedule,
     )
     summary_col, matrix_col = st.columns([0.78, 4.5])
     with summary_col:
         _render_magic_scenario_result(
             scenario,
-            reset_counter_key,
+            result_state_key,
+            revision_key,
             year,
             league,
             target_team,
@@ -644,10 +647,33 @@ def _render_magic_analysis(
         ):
             st.session_state[show_past_key] = not st.session_state[show_past_key]
             st.rerun()
-        with st.container():
-            _render_magic_matrix_header(league)
-        with st.container(height=720, border=True):
-            results = _render_magic_game_matrix(matrix_schedule, result_state_key, league)
+        with st.form(
+            key=f"magic_matrix_form_{year}_{league}_{target_team}",
+            clear_on_submit=False,
+            border=False,
+        ):
+            submitted = st.form_submit_button(
+                "入力内容を反映",
+                use_container_width=False,
+            )
+            with st.container():
+                _render_magic_matrix_header(league)
+            with st.container(height=720, border=True):
+                _render_magic_game_matrix(
+                    matrix_schedule,
+                    result_state_key,
+                    widget_prefix,
+                    league,
+                )
+        if submitted:
+            st.session_state[result_state_key] = _collect_magic_matrix_results(
+                matrix_schedule,
+                widget_prefix,
+                result_state_key,
+                league,
+            )
+            st.session_state[revision_key] += 1
+            st.rerun()
     st.markdown("<div class='magic-team-status-title'>チーム別の判定</div>", unsafe_allow_html=True)
     _render_table(_format_magic_team_status_table(scenario.condition_table))
 
@@ -703,6 +729,7 @@ def _magic_past_schedule(schedule: pd.DataFrame, league: str) -> pd.DataFrame:
 def _render_magic_game_matrix(
     schedule: pd.DataFrame,
     result_state_key: str,
+    widget_prefix: str,
     league: str,
 ) -> dict[str, str]:
     teams = league_teams(league)
@@ -751,10 +778,10 @@ def _render_magic_game_matrix(
                         unsafe_allow_html=True,
                     )
                     continue
-                widget_key = _magic_result_widget_key(result_state_key, game_key, team)
+                widget_key = _magic_result_widget_key(widget_prefix, game_key, team)
                 current_result = str(results.get(game_key, "未入力"))
                 default_symbol = _result_symbol_for_team(current_result, team, game.HomeTeam)
-                if st.session_state.get(widget_key) not in {"未", "○", "△", "●"}:
+                if widget_key not in st.session_state:
                     st.session_state[widget_key] = default_symbol
                 with result_column:
                     st.selectbox(
@@ -762,16 +789,6 @@ def _render_magic_game_matrix(
                         options=["未", "○", "●", "△"],
                         key=widget_key,
                         label_visibility="collapsed",
-                        on_change=_sync_magic_matrix_result,
-                        args=(
-                            result_state_key,
-                            game_key,
-                            team,
-                            str(game.HomeTeam),
-                            str(game.AwayTeam),
-                            widget_key,
-                            teams,
-                        ),
                     )
     return {str(key): str(value) for key, value in results.items()}
 
@@ -809,37 +826,57 @@ def _magic_result_widget_key(result_state_key: str, game_key: str, team: str) ->
     return f"{result_state_key}_{game_key}_{team}"
 
 
-def _sync_magic_matrix_result(
+def _collect_magic_matrix_results(
+    schedule: pd.DataFrame,
+    widget_prefix: str,
     result_state_key: str,
-    game_key: str,
-    team: str,
-    home: str,
-    away: str,
-    widget_key: str,
-    league_teams_for_matrix: tuple[str, ...],
-) -> None:
-    symbol = str(st.session_state.get(widget_key, "未"))
-    if symbol == "○":
-        result = "ホーム勝" if team == home else "ビジター勝"
-    elif symbol == "●":
-        result = "ビジター勝" if team == home else "ホーム勝"
-    elif symbol == "△":
-        result = "引分"
-    else:
-        result = "未入力"
-
-    results = dict(st.session_state.get(result_state_key, {}))
-    results[game_key] = result
-    st.session_state[result_state_key] = results
-    for opponent_team in (home, away):
-        if opponent_team not in league_teams_for_matrix:
+    league: str,
+) -> dict[str, str]:
+    previous_results = dict(st.session_state.get(result_state_key, {}))
+    collected: dict[str, str] = {}
+    teams = league_teams(league)
+    for game in schedule.itertuples(index=False):
+        if bool(getattr(game, "IsPast", False)):
             continue
-        opponent_key = _magic_result_widget_key(result_state_key, game_key, opponent_team)
-        st.session_state[opponent_key] = _result_symbol_for_team(
-            result,
-            opponent_team,
-            home,
-        )
+        game_key = str(game.GameKey)
+        home = str(game.HomeTeam)
+        away = str(game.AwayTeam)
+        if home not in teams or away not in teams:
+            continue
+        home_key = _magic_result_widget_key(widget_prefix, game_key, home)
+        away_key = _magic_result_widget_key(widget_prefix, game_key, away)
+        home_symbol = str(st.session_state.get(home_key, "未"))
+        away_symbol = str(st.session_state.get(away_key, "未"))
+        previous_result = str(previous_results.get(game_key, "未入力"))
+        previous_home = _result_symbol_for_team(previous_result, home, home)
+        previous_away = _result_symbol_for_team(previous_result, away, home)
+        home_changed = home_symbol != previous_home
+        away_changed = away_symbol != previous_away
+        home_result = _game_result_from_symbol(home_symbol, home, home)
+        away_result = _game_result_from_symbol(away_symbol, away, home)
+        if home_changed and not away_changed:
+            result = home_result
+        elif away_changed and not home_changed:
+            result = away_result
+        elif home_result == away_result:
+            result = home_result
+        elif home_result != "未入力":
+            result = home_result
+        else:
+            result = away_result
+        if result != "未入力":
+            collected[game_key] = result
+    return collected
+
+
+def _game_result_from_symbol(symbol: str, team: str, home: str) -> str:
+    if symbol == "○":
+        return "ホーム勝" if team == home else "ビジター勝"
+    elif symbol == "●":
+        return "ビジター勝" if team == home else "ホーム勝"
+    elif symbol == "△":
+        return "引分"
+    return "未入力"
 
 
 def _result_symbol_for_team(result: str, team: str, home: str) -> str:
@@ -854,7 +891,8 @@ def _result_symbol_for_team(result: str, team: str, home: str) -> str:
 
 def _render_magic_scenario_result(
     scenario: MagicScenarioAnalysis,
-    reset_counter_key: str,
+    result_state_key: str,
+    revision_key: str,
     year: int,
     league: str,
     target_team: str,
@@ -864,8 +902,6 @@ def _render_magic_scenario_result(
     metric_cols = st.columns(1)
     metric_cols[0].metric("優勝確認", "優勝" if scenario.is_clinched else "未確定")
     metric_cols[0].metric("マジック点灯確認", "点灯" if scenario.is_lit else "未点灯")
-    metric_cols[0].metric("最短マジック点灯日", _magic_date_display(scenario.first_lit_date))
-    metric_cols[0].metric("最短優勝日", _magic_date_display(scenario.first_clinch_date))
     magic_number = scenario.magic_number
     magic_display = "—" if magic_number is None or not scenario.is_lit else f"M{magic_number}"
     metric_cols[0].metric("マジック数", magic_display)
@@ -874,7 +910,8 @@ def _render_magic_scenario_result(
         key=f"magic_game_reset_button_{year}_{league}_{target_team}",
         use_container_width=True,
     ):
-        st.session_state[reset_counter_key] += 1
+        st.session_state[result_state_key] = {}
+        st.session_state[revision_key] += 1
         st.rerun()
 
 
@@ -898,12 +935,6 @@ def _format_magic_team_status_table(frame: pd.DataFrame) -> pd.DataFrame:
     )
     formatted["必要勝利数"] = formatted["NeededWins"].map(_needed_wins_display)
     return formatted[columns]
-
-
-def _magic_date_display(value: pd.Timestamp | None) -> str:
-    if value is None or pd.isna(value):
-        return "未確定"
-    return pd.Timestamp(value).strftime("%Y-%m-%d")
 
 
 def _champion_date_chart(

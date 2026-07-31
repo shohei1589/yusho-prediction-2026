@@ -41,6 +41,7 @@ def analyze_magic_scenario(
     league: str,
     target_team: str,
     results: dict[str, str] | None = None,
+    official_schedule: pd.DataFrame | None = None,
 ) -> MagicScenarioAnalysis:
     """Evaluate a game-by-game result scenario for magic and clinching checks.
 
@@ -54,6 +55,13 @@ def analyze_magic_scenario(
         str(key): _normalize_game_result(value)
         for key, value in (results or {}).items()
     }
+    direct_records = _head_to_head_records(
+        official_schedule,
+        frame,
+        normalized_results,
+        teams,
+        target_team,
+    )
 
     current_records, remaining = _scenario_state(
         base_records,
@@ -66,6 +74,7 @@ def analyze_magic_scenario(
         remaining,
         teams,
         target_team,
+        direct_records,
     )
     timeline = _scenario_timeline(
         base_records,
@@ -73,6 +82,7 @@ def analyze_magic_scenario(
         normalized_results,
         teams,
         target_team,
+        official_schedule,
     )
     first_lit_date = _first_timeline_date(timeline, "IsLit")
     first_clinch_date = _first_timeline_date(timeline, "IsClinched")
@@ -108,8 +118,16 @@ def analyze_magic(
     schedule: pd.DataFrame,
     league: str,
     target_team: str,
+    official_schedule: pd.DataFrame | None = None,
 ) -> MagicAnalysis:
     teams = league_teams(league)
+    direct_records = _head_to_head_records(
+        official_schedule,
+        schedule,
+        {},
+        teams,
+        target_team,
+    )
     records = {
         str(row.Team): {
             "Wins": int(row.Wins),
@@ -137,6 +155,7 @@ def analyze_magic(
             target_remaining,
             rival_remaining,
             direct_remaining,
+            direct_records.get(rival),
         )
         lit_target_rate, lit_rival_rate, is_lit_vs_rival = _lighting_check_vs_rival(
             target_record,
@@ -144,6 +163,7 @@ def analyze_magic(
             target_remaining,
             rival_remaining,
             direct_remaining,
+            direct_records.get(rival),
         )
 
         clinch_rows.append(
@@ -296,6 +316,7 @@ def _condition_table(
     remaining: pd.DataFrame,
     teams: tuple[str, ...],
     target_team: str,
+    direct_records: dict[str, dict[str, int]],
 ) -> tuple[pd.DataFrame, bool, bool]:
     rows: list[dict[str, object]] = []
     for rival in teams:
@@ -328,6 +349,7 @@ def _condition_table(
             target_remaining,
             rival_remaining,
             direct_remaining,
+            direct_records.get(rival),
         )
         rows.append(
             {
@@ -340,8 +362,18 @@ def _condition_table(
                 "RivalMaxRate": rival_max_rate,
                 "TargetMinRate": target_min_rate,
                 "RivalMaxRateForClinch": rival_max_rate_for_clinch,
-                "IsLit": target_scenario_rate > rival_max_rate,
-                "IsClinched": target_min_rate > rival_max_rate_for_clinch,
+                "IsLit": _ranking_condition_holds(
+                    target_scenario_rate,
+                    rival_max_rate,
+                    direct_records.get(rival),
+                    direct_remaining,
+                ),
+                "IsClinched": _ranking_condition_holds(
+                    target_min_rate,
+                    rival_max_rate_for_clinch,
+                    direct_records.get(rival),
+                    direct_remaining,
+                ),
             }
         )
     table = pd.DataFrame(rows)
@@ -356,6 +388,7 @@ def _scenario_timeline(
     results: dict[str, str],
     teams: tuple[str, ...],
     target_team: str,
+    official_schedule: pd.DataFrame | None,
 ) -> pd.DataFrame:
     if schedule.empty:
         return pd.DataFrame()
@@ -373,6 +406,14 @@ def _scenario_timeline(
             remaining,
             teams,
             target_team,
+            _head_to_head_records(
+                official_schedule,
+                schedule,
+                results,
+                teams,
+                target_team,
+                cutoff=game_date,
+            ),
         )
         day_rows = dated_schedule[dated_schedule["Date"] == game_date]
         labels = [label for label in day_rows["DateLabel"].unique() if label]
@@ -443,6 +484,7 @@ def _needed_wins_vs_rival(
     target_remaining: int,
     rival_remaining: int,
     direct_remaining: int,
+    direct_record: dict[str, int] | None = None,
 ) -> tuple[int | None, float, float]:
     target_non_direct_remaining = max(0, target_remaining - direct_remaining)
     best_target_rate = 0.0
@@ -458,7 +500,13 @@ def _needed_wins_vs_rival(
         rival_rate = _win_rate(rival_wins, rival_losses)
         best_target_rate = target_rate
         best_rival_rate = rival_rate
-        if target_rate > rival_rate:
+        if _ranking_condition_holds(
+            target_rate,
+            rival_rate,
+            direct_record,
+            direct_remaining,
+            target_direct_wins=forced_direct_wins,
+        ):
             return target_wins_needed, target_rate, rival_rate
 
     return None, best_target_rate, best_rival_rate
@@ -470,6 +518,7 @@ def _lighting_check_vs_rival(
     target_remaining: int,
     rival_remaining: int,
     direct_remaining: int,
+    direct_record: dict[str, int] | None = None,
 ) -> tuple[float, float, bool]:
     target_wins = target["Wins"] + max(0, target_remaining - direct_remaining)
     target_losses = target["Losses"] + direct_remaining
@@ -477,7 +526,115 @@ def _lighting_check_vs_rival(
     rival_losses = rival["Losses"]
     target_rate = _win_rate(target_wins, target_losses)
     rival_rate = _win_rate(rival_wins, rival_losses)
-    return target_rate, rival_rate, target_rate > rival_rate
+    return target_rate, rival_rate, _ranking_condition_holds(
+        target_rate,
+        rival_rate,
+        direct_record,
+        direct_remaining,
+    )
+
+
+def _ranking_condition_holds(
+    target_rate: float,
+    rival_rate: float,
+    direct_record: dict[str, int] | None,
+    direct_remaining: int,
+    target_direct_wins: int = 0,
+) -> bool:
+    if target_rate > rival_rate:
+        return True
+    if target_rate < rival_rate:
+        return False
+    record = direct_record or {}
+    target_wins = int(record.get("TargetWins", 0)) + int(target_direct_wins)
+    rival_wins = int(record.get("RivalWins", 0)) + max(
+        0,
+        int(direct_remaining) - int(target_direct_wins),
+    )
+    return target_wins > rival_wins
+
+
+def _head_to_head_records(
+    official_schedule: pd.DataFrame | None,
+    schedule: pd.DataFrame,
+    results: dict[str, str],
+    teams: tuple[str, ...],
+    target_team: str,
+    cutoff: pd.Timestamp | date | None = None,
+) -> dict[str, dict[str, int]]:
+    records = {
+        rival: {"TargetWins": 0, "RivalWins": 0, "Ties": 0}
+        for rival in teams
+        if rival != target_team
+    }
+
+    if official_schedule is not None and not official_schedule.empty:
+        official = official_schedule.copy()
+        official["Date"] = pd.to_datetime(official["Date"], errors="coerce")
+        for row in official.itertuples(index=False):
+            game_date = getattr(row, "Date", pd.NaT)
+            if cutoff is not None and (
+                pd.isna(game_date) or pd.Timestamp(game_date) > pd.Timestamp(cutoff)
+            ):
+                continue
+            score_home = pd.to_numeric(getattr(row, "Score1", pd.NA), errors="coerce")
+            score_away = pd.to_numeric(getattr(row, "Score2", pd.NA), errors="coerce")
+            if pd.isna(score_home) or pd.isna(score_away):
+                continue
+            _add_head_to_head_result(
+                records,
+                target_team,
+                str(getattr(row, "HomeTeam", "")),
+                str(getattr(row, "AwayTeam", "")),
+                "引分" if float(score_home) == float(score_away)
+                else "ホーム勝" if float(score_home) > float(score_away)
+                else "ビジター勝",
+            )
+
+    prepared = _prepare_schedule(schedule)
+    for row in prepared.itertuples(index=False):
+        game_date = getattr(row, "Date", pd.NaT)
+        if cutoff is not None and (
+            pd.isna(game_date) or pd.Timestamp(game_date) > pd.Timestamp(cutoff)
+        ):
+            continue
+        result = _normalize_game_result(results.get(str(row.GameKey), "未入力"))
+        if result == "未入力":
+            continue
+        _add_head_to_head_result(
+            records,
+            target_team,
+            str(row.HomeTeam),
+            str(row.AwayTeam),
+            result,
+        )
+    return records
+
+
+def _add_head_to_head_result(
+    records: dict[str, dict[str, int]],
+    target_team: str,
+    home: str,
+    away: str,
+    result: str,
+) -> None:
+    if home == target_team:
+        rival = away
+        target_is_home = True
+    elif away == target_team:
+        rival = home
+        target_is_home = False
+    else:
+        return
+    if rival not in records:
+        return
+    direct = records[rival]
+    if result == "引分":
+        direct["Ties"] += 1
+    elif (result == "ホーム勝") == target_is_home:
+        direct["TargetWins"] += 1
+    else:
+        direct["RivalWins"] += 1
 
 
 def _overall_required_wins(clinch_table: pd.DataFrame) -> int | None:
