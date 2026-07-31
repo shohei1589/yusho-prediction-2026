@@ -680,12 +680,12 @@ def _render_magic_game_matrix(
                 widget_key = _magic_result_widget_key(result_state_key, game_key, team)
                 current_result = str(results.get(game_key, "未入力"))
                 default_symbol = _result_symbol_for_team(current_result, team, game.HomeTeam)
-                if st.session_state.get(widget_key) not in {"", "○", "△", "●"}:
+                if st.session_state.get(widget_key) not in {"未", "○", "△", "●"}:
                     st.session_state[widget_key] = default_symbol
                 with result_column:
                     st.selectbox(
                         "結果",
-                        options=["", "○", "△", "●"],
+                        options=["未", "○", "●", "△"],
                         key=widget_key,
                         label_visibility="collapsed",
                         on_change=_sync_magic_matrix_result,
@@ -733,7 +733,7 @@ def _sync_magic_matrix_result(
     widget_key: str,
     league_teams_for_matrix: tuple[str, ...],
 ) -> None:
-    symbol = str(st.session_state.get(widget_key, ""))
+    symbol = str(st.session_state.get(widget_key, "未"))
     if symbol == "○":
         result = "ホーム勝" if team == home else "ビジター勝"
     elif symbol == "●":
@@ -764,7 +764,7 @@ def _result_symbol_for_team(result: str, team: str, home: str) -> str:
         return "○" if team == home else "●"
     if result == "ビジター勝":
         return "●" if team == home else "○"
-    return ""
+    return "未"
 
 
 def _magic_schedule_token(frame: pd.DataFrame) -> str:
@@ -1653,13 +1653,37 @@ div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) > div[data-testid="
   margin: 0 !important;
   padding: 0 !important;
 }}
+div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) > div[data-testid="column"] {{
+  box-sizing: border-box;
+  min-height: 46px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border-left: 1px solid {matrix_border};
+  border-bottom: 1px solid {matrix_border};
+}}
+div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) .magic-matrix-date,
+div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) .magic-matrix-opponent,
+div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) .magic-matrix-empty {{
+  min-height: 46px !important;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}}
 div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) div[data-testid="stSelectbox"] {{
   box-sizing: border-box;
-  min-height: 40px !important;
+  min-height: 46px !important;
+  height: 46px !important;
   margin: 0 !important;
   padding: 0 !important;
   border: 1px solid {matrix_border} !important;
   background: {surface};
+}}
+div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) div[data-testid="stSelectbox"] > div,
+div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) [data-baseweb="select"] > div {{
+  min-height: 46px !important;
+  height: 46px !important;
+  box-sizing: border-box;
 }}
 div[data-testid="stVerticalBlock"]:has(.magic-matrix-header) div[data-testid="stSelectbox"] [data-baseweb="select"] > div {{
   min-height: 28px;
