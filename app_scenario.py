@@ -1020,8 +1020,8 @@ def _render_magic_analysis_with_apply(
         with control_cols[1]:
             st.markdown(
                 "<div class='magic-matrix-help'>"
-                "相手チームの結果は自動表示されます。"
-                "表示が揃わない場合も「入力内容を反映」で両チームを揃えて判定します。"
+                "入力中は両チームの欄を編集できます。"
+                "相手チームの結果と判定への反映は「入力内容を反映」を押してください。"
                 "</div>",
                 unsafe_allow_html=True,
             )
@@ -1064,14 +1064,13 @@ def _render_magic_analysis_with_apply(
             target_team,
         )
     with matrix_col:
+        _render_magic_matrix_header(league)
         with st.container(height=720, border=True):
-            _render_magic_matrix_header(league)
             _render_magic_game_matrix_draft(
                 matrix_schedule,
                 draft_state_key,
                 widget_prefix,
                 league,
-                revision_key,
             )
 
     st.markdown(
@@ -1086,7 +1085,6 @@ def _render_magic_game_matrix_draft(
     draft_state_key: str,
     widget_prefix: str,
     league: str,
-    revision_key: str,
 ) -> None:
     teams = league_teams(league)
     st.session_state.setdefault(draft_state_key, {})
@@ -1168,7 +1166,7 @@ def _render_magic_game_matrix_draft(
                     team,
                     game.HomeTeam,
                 )
-                if st.session_state.get(widget_key) != default_symbol:
+                if widget_key not in st.session_state:
                     st.session_state[widget_key] = default_symbol
                 widget_map.setdefault(game_key, []).append(
                     (widget_key, team, str(game.HomeTeam))
@@ -1179,15 +1177,6 @@ def _render_magic_game_matrix_draft(
                         options=["未", "○", "●", "△"],
                         key=widget_key,
                         label_visibility="collapsed",
-                        on_change=_sync_magic_matrix_draft,
-                        args=(
-                            draft_state_key,
-                            game_key,
-                            team,
-                            str(game.HomeTeam),
-                            widget_key,
-                            revision_key,
-                        ),
                     )
     st.session_state[widget_map_key] = widget_map
 
@@ -1200,44 +1189,32 @@ def _sync_magic_draft_from_widgets(draft_state_key: str) -> None:
     draft_results = dict(st.session_state.get(draft_state_key, {}))
     for game_key, sides in widget_map.items():
         candidates = []
+        changed_candidates = []
         for widget_key, team, home in sides:
             symbol = str(st.session_state.get(widget_key, "未"))
+            current_result = draft_results.get(game_key, "未入力")
+            expected_symbol = _result_symbol_for_team(
+                current_result,
+                team,
+                home,
+            )
+            candidate = (_game_result_from_symbol(symbol, team, home), team)
             if symbol != "未":
-                candidates.append(
-                    (_game_result_from_symbol(symbol, team, home), team)
-                )
+                candidates.append(candidate)
+            if symbol != expected_symbol:
+                changed_candidates.append(candidate)
+        if changed_candidates:
+            changed_result = changed_candidates[0][0]
+            if changed_result == "未入力":
+                draft_results.pop(game_key, None)
+            else:
+                draft_results[game_key] = changed_result
+            continue
         if not candidates:
             draft_results.pop(game_key, None)
             continue
-        current_result = draft_results.get(game_key)
-        matching = [
-            result
-            for result, _team in candidates
-            if result == current_result
-        ]
-        draft_results[game_key] = matching[0] if matching else candidates[0][0]
+        draft_results[game_key] = draft_results.get(game_key, candidates[0][0])
     st.session_state[draft_state_key] = draft_results
-
-
-def _sync_magic_matrix_draft(
-    draft_state_key: str,
-    game_key: str,
-    team: str,
-    home: str,
-    widget_key: str,
-    revision_key: str,
-) -> None:
-    symbol = str(st.session_state.get(widget_key, "未"))
-    result = _game_result_from_symbol(symbol, team, home)
-    draft_results = dict(st.session_state.get(draft_state_key, {}))
-    if result == "未入力":
-        draft_results.pop(game_key, None)
-    else:
-        draft_results[game_key] = result
-    st.session_state[draft_state_key] = draft_results
-    st.session_state[revision_key] = int(
-        st.session_state.get(revision_key, 0)
-    ) + 1
 
 
 def _render_magic_scenario_result_applied(
@@ -2224,6 +2201,18 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-header) > div 
   position: sticky !important;
   top: 0 !important;
   z-index: 1000 !important;
+}}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-date) {{
+  height: 720px !important;
+  max-height: 720px !important;
+  overflow: hidden !important;
+}}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-date) > div {{
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow-y: auto !important;
+  overflow-x: auto !important;
 }}
 .makeup-note {{
   width: fit-content;
