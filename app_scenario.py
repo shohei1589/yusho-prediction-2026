@@ -826,7 +826,7 @@ def _render_magic_game_matrix(
                 widget_key = _magic_result_widget_key(widget_prefix, game_key, team)
                 current_result = str(results.get(game_key, "未入力"))
                 default_symbol = _result_symbol_for_team(current_result, team, game.HomeTeam)
-                if widget_key not in st.session_state:
+                if st.session_state.get(widget_key) != default_symbol:
                     st.session_state[widget_key] = default_symbol
                 with result_column:
                     st.selectbox(
@@ -1018,11 +1018,19 @@ def _render_magic_analysis_with_apply(
                 st.session_state[show_past_key] = not st.session_state[show_past_key]
                 st.rerun()
         with control_cols[1]:
+            st.markdown(
+                "<div class='magic-matrix-help'>"
+                "相手チームの結果は自動表示されます。"
+                "優勝・マジック判定への反映は「入力内容を反映」を押してください。"
+                "</div>",
+                unsafe_allow_html=True,
+            )
             if st.button(
                 "入力内容を反映",
                 key=f"magic_apply_button_{year}_{league}_{target_team}",
                 use_container_width=False,
             ):
+                _sync_magic_draft_from_widgets(draft_state_key)
                 st.session_state[applied_state_key] = dict(
                     st.session_state.get(draft_state_key, {})
                 )
@@ -1079,6 +1087,8 @@ def _render_magic_game_matrix_draft(
     teams = league_teams(league)
     st.session_state.setdefault(draft_state_key, {})
     draft_results = st.session_state[draft_state_key]
+    widget_map_key = f"{draft_state_key}_widget_map"
+    widget_map: dict[str, list[tuple[str, str, str]]] = {}
     schedule_by_date = schedule.groupby("Date", sort=True)
     column_widths = [1.1] + [1.0, 0.72] * len(teams)
 
@@ -1154,12 +1164,10 @@ def _render_magic_game_matrix_draft(
                     team,
                     game.HomeTeam,
                 )
-                if widget_key not in st.session_state:
+                if st.session_state.get(widget_key) != default_symbol:
                     st.session_state[widget_key] = default_symbol
-                opponent_widget_key = _magic_result_widget_key(
-                    widget_prefix,
-                    game_key,
-                    opponent,
+                widget_map.setdefault(game_key, []).append(
+                    (widget_key, team, str(game.HomeTeam))
                 )
                 with result_column:
                     st.selectbox(
@@ -1174,10 +1182,36 @@ def _render_magic_game_matrix_draft(
                             team,
                             str(game.HomeTeam),
                             widget_key,
-                            opponent_widget_key,
-                            opponent,
                         ),
                     )
+    st.session_state[widget_map_key] = widget_map
+
+
+def _sync_magic_draft_from_widgets(draft_state_key: str) -> None:
+    widget_map = st.session_state.get(
+        f"{draft_state_key}_widget_map",
+        {},
+    )
+    draft_results = dict(st.session_state.get(draft_state_key, {}))
+    for game_key, sides in widget_map.items():
+        candidates = []
+        for widget_key, team, home in sides:
+            symbol = str(st.session_state.get(widget_key, "未"))
+            if symbol != "未":
+                candidates.append(
+                    (_game_result_from_symbol(symbol, team, home), team)
+                )
+        if not candidates:
+            draft_results.pop(game_key, None)
+            continue
+        current_result = draft_results.get(game_key)
+        matching = [
+            result
+            for result, _team in candidates
+            if result == current_result
+        ]
+        draft_results[game_key] = matching[0] if matching else candidates[0][0]
+    st.session_state[draft_state_key] = draft_results
 
 
 def _sync_magic_matrix_draft(
@@ -1186,8 +1220,6 @@ def _sync_magic_matrix_draft(
     team: str,
     home: str,
     widget_key: str,
-    opponent_widget_key: str,
-    opponent_team: str,
 ) -> None:
     symbol = str(st.session_state.get(widget_key, "未"))
     result = _game_result_from_symbol(symbol, team, home)
@@ -1197,11 +1229,6 @@ def _sync_magic_matrix_draft(
     else:
         draft_results[game_key] = result
     st.session_state[draft_state_key] = draft_results
-    st.session_state[opponent_widget_key] = (
-        _result_symbol_for_team(result, opponent_team, home)
-        if result != "未入力"
-        else "未"
-    )
 
 
 def _render_magic_scenario_result_applied(
@@ -1865,7 +1892,9 @@ div[data-testid="stAlert"] p {{
   white-space: nowrap;
 }}
 .magic-matrix-header {{
-  position: static;
+  position: sticky;
+  top: 0;
+  z-index: 1002;
   min-height: 40px;
   height: 40px;
   box-sizing: border-box;
@@ -1888,6 +1917,13 @@ div[data-testid="stAlert"] p {{
 }}
 .magic-matrix-result-header {{
   font-size: 0.72rem;
+}}
+.magic-matrix-help {{
+  margin: 0 0 0.2rem;
+  color: {muted};
+  font-size: 0.7rem;
+  line-height: 1.35;
+  font-weight: 700;
 }}
 .magic-summary-title {{
   margin: 0 0 0.35rem;
@@ -2010,6 +2046,14 @@ div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header) {{
   background: {surface} !important;
   box-shadow: 0 1px 0 {matrix_border};
 }}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-header) div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header) {{
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 1000 !important;
+  width: 100% !important;
+  min-height: 40px !important;
+  background: {surface} !important;
+}}
 div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header) > div[data-testid="column"],
 div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) > div[data-testid="column"] {{
   box-sizing: border-box;
@@ -2028,7 +2072,10 @@ div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) > div[data-testid="
   border-right: 2px solid {matrix_border};
 }}
 div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-header) {{
-  overflow: auto !important;
+  height: 720px !important;
+  max-height: 720px !important;
+  overflow-y: auto !important;
+  overflow-x: auto !important;
   border: 1px solid {matrix_border} !important;
   border-radius: 0 !important;
   background: {surface} !important;
