@@ -219,6 +219,7 @@ def main() -> None:
         displayed_rates,
         displayed_schedule,
         displayed_daily_opponents,
+        full_schedule_result.frame,
         league,
         target_team,
         start_date,
@@ -269,6 +270,7 @@ def _render_summary(
     assumed_win_rates: dict[str, float],
     schedule: pd.DataFrame,
     daily_opponents: pd.DataFrame,
+    full_schedule: pd.DataFrame,
     league: str,
     target_team: str,
     start_date: date,
@@ -305,7 +307,13 @@ def _render_summary(
             _render_table(_format_final_standings(result.final_standings))
 
     with tab_magic:
-        _render_magic_analysis(standings, schedule, league, target_team)
+        _render_magic_analysis(
+            standings,
+            schedule,
+            full_schedule,
+            league,
+            target_team,
+        )
 
     with tab_standings:
         left, right = st.columns([3, 2])
@@ -576,14 +584,28 @@ def _render_table(frame: pd.DataFrame) -> None:
 def _render_magic_analysis(
     standings: pd.DataFrame,
     schedule: pd.DataFrame,
+    full_schedule: pd.DataFrame,
     league: str,
     target_team: str,
 ) -> None:
     st.subheader("全試合シナリオ確認")
-    matrix_schedule = _magic_matrix_schedule(schedule)
-    if matrix_schedule.empty:
+    remaining_matrix_schedule = _magic_matrix_schedule(schedule)
+    past_schedule = _magic_past_schedule(full_schedule, league)
+    if remaining_matrix_schedule.empty and past_schedule.empty:
         st.info("入力できる残り試合はありません。")
         return
+
+    show_past_key = f"magic_show_past_{league}_{target_team}"
+    st.session_state.setdefault(show_past_key, False)
+    past_matrix_schedule = _magic_matrix_schedule(past_schedule)
+    if st.session_state[show_past_key] and not past_matrix_schedule.empty:
+        matrix_schedule = pd.concat(
+            [past_matrix_schedule, remaining_matrix_schedule],
+            ignore_index=True,
+        )
+        matrix_schedule = _magic_matrix_schedule(matrix_schedule)
+    else:
+        matrix_schedule = remaining_matrix_schedule
 
     schedule_token = _magic_schedule_token(matrix_schedule)
     reset_counter_key = f"magic_game_reset_{league}_{target_team}_{schedule_token}"
@@ -596,12 +618,20 @@ def _render_magic_analysis(
     summary_col, matrix_col = st.columns([0.78, 4.5])
     with matrix_col:
         st.markdown("<div class='magic-matrix-marker'></div>", unsafe_allow_html=True)
-        _render_magic_matrix_header(league)
+        toggle_label = "− 過去日を隠す" if st.session_state[show_past_key] else "＋ 過去日を表示"
+        if st.button(
+            toggle_label,
+            key=f"magic_past_toggle_{league}_{target_team}",
+            use_container_width=False,
+        ):
+            st.session_state[show_past_key] = not st.session_state[show_past_key]
+            st.rerun()
         with st.container(height=720, border=True):
+            _render_magic_matrix_header(league)
             results = _render_magic_game_matrix(matrix_schedule, result_state_key, league)
     scenario = analyze_magic_scenario(
         standings,
-        matrix_schedule,
+        remaining_matrix_schedule,
         league,
         target_team,
         results,
@@ -622,7 +652,6 @@ def _magic_matrix_schedule(schedule: pd.DataFrame) -> pd.DataFrame:
     if schedule.empty or "Date" not in schedule.columns:
         return pd.DataFrame()
     frame = schedule.copy().reset_index(drop=True)
-    frame["GameKey"] = [str(index) for index in frame.index]
     frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
     frame = frame.dropna(subset=["Date"])
     if frame.empty:
@@ -630,7 +659,41 @@ def _magic_matrix_schedule(schedule: pd.DataFrame) -> pd.DataFrame:
     if "DateLabel" not in frame.columns:
         frame["DateLabel"] = ""
     frame["DateLabel"] = frame["DateLabel"].fillna("").astype(str).str.strip()
-    return frame.sort_values(["Date", "HomeTeam", "AwayTeam"]).reset_index(drop=True)
+    frame = frame.sort_values(["Date", "HomeTeam", "AwayTeam"]).reset_index(drop=True)
+    duplicate_number = frame.groupby(
+        ["Date", "HomeTeam", "AwayTeam"],
+        dropna=False,
+    ).cumcount()
+    frame["GameKey"] = (
+        frame["Date"].dt.strftime("%Y%m%d")
+        + "_"
+        + frame["HomeTeam"].astype(str)
+        + "_"
+        + frame["AwayTeam"].astype(str)
+        + "_"
+        + duplicate_number.astype(str)
+    )
+    if "IsPast" not in frame.columns:
+        frame["IsPast"] = False
+    else:
+        frame["IsPast"] = frame["IsPast"].fillna(False).astype(bool)
+    return frame
+
+
+def _magic_past_schedule(schedule: pd.DataFrame, league: str) -> pd.DataFrame:
+    if schedule.empty or "Date" not in schedule.columns:
+        return pd.DataFrame()
+    frame = schedule.copy()
+    frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+    league_codes = set(league_teams(league))
+    frame = frame[
+        (frame["Date"] < pd.Timestamp(date.today()))
+        & (frame["HomeTeam"].isin(league_codes) | frame["AwayTeam"].isin(league_codes))
+    ].copy()
+    if frame.empty:
+        return frame
+    frame["IsPast"] = True
+    return frame
 
 
 def _render_magic_game_matrix(
@@ -677,6 +740,13 @@ def _render_magic_game_matrix(
                         f"<div class='magic-matrix-opponent' style='color:{opponent_color};'>{opponent_label}</div>",
                         unsafe_allow_html=True,
                     )
+                if bool(getattr(game, "IsPast", False)):
+                    past_symbol = _official_result_symbol(game, team)
+                    result_column.markdown(
+                        f"<div class='magic-matrix-result-readonly'>{past_symbol}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    continue
                 widget_key = _magic_result_widget_key(result_state_key, game_key, team)
                 current_result = str(results.get(game_key, "未入力"))
                 default_symbol = _result_symbol_for_team(current_result, team, game.HomeTeam)
@@ -700,6 +770,17 @@ def _render_magic_game_matrix(
                         ),
                     )
     return {str(key): str(value) for key, value in results.items()}
+
+
+def _official_result_symbol(game: object, team: str) -> str:
+    score_home = getattr(game, "Score1", pd.NA)
+    score_away = getattr(game, "Score2", pd.NA)
+    if pd.isna(score_home) or pd.isna(score_away):
+        return "未"
+    if float(score_home) == float(score_away):
+        return "△"
+    home_won = float(score_home) > float(score_away)
+    return "○" if (team == game.HomeTeam) == home_won else "●"
 
 
 def _render_magic_matrix_header(league: str) -> None:
@@ -1525,6 +1606,19 @@ div[data-testid="stVerticalBlock"]:has(.magic-summary-marker) button {{
   color: {muted};
   text-align: center;
 }}
+.magic-matrix-result-readonly {{
+  min-height: 46px;
+  height: 46px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid {matrix_border};
+  color: {text};
+  font-size: 0.92rem;
+  font-weight: 900;
+  text-align: center;
+}}
 div[data-testid="stSelectbox"] {{
   margin-bottom: 0.25rem;
 }}
@@ -1553,7 +1647,9 @@ div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header) {{
   position: sticky;
   top: 0;
   z-index: 50;
-  min-width: 900px;
+  min-width: 0 !important;
+  margin-left: 0 !important;
+  width: 100% !important;
   background: {surface};
 }}
 div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header) > div[data-testid="column"],
