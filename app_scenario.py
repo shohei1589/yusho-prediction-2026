@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import date
-import hashlib
 import os
 import re
 
@@ -220,6 +219,7 @@ def main() -> None:
         displayed_schedule,
         displayed_daily_opponents,
         full_schedule_result.frame,
+        int(year),
         league,
         target_team,
         start_date,
@@ -271,6 +271,7 @@ def _render_summary(
     schedule: pd.DataFrame,
     daily_opponents: pd.DataFrame,
     full_schedule: pd.DataFrame,
+    year: int,
     league: str,
     target_team: str,
     start_date: date,
@@ -311,6 +312,7 @@ def _render_summary(
             standings,
             schedule,
             full_schedule,
+            year,
             league,
             target_team,
         )
@@ -585,6 +587,7 @@ def _render_magic_analysis(
     standings: pd.DataFrame,
     schedule: pd.DataFrame,
     full_schedule: pd.DataFrame,
+    year: int,
     league: str,
     target_team: str,
 ) -> None:
@@ -607,15 +610,30 @@ def _render_magic_analysis(
     else:
         matrix_schedule = remaining_matrix_schedule
 
-    schedule_token = _magic_schedule_token(matrix_schedule)
-    reset_counter_key = f"magic_game_reset_{league}_{target_team}_{schedule_token}"
+    reset_counter_key = f"magic_game_reset_{year}_{league}_{target_team}"
     if reset_counter_key not in st.session_state:
         st.session_state[reset_counter_key] = 0
     result_state_key = (
-        f"magic_matrix_results_{league}_{target_team}_{schedule_token}_"
+        f"magic_matrix_results_{year}_{league}_{target_team}_"
         f"{st.session_state[reset_counter_key]}"
     )
+    results = dict(st.session_state.get(result_state_key, {}))
+    scenario = analyze_magic_scenario(
+        standings,
+        remaining_matrix_schedule,
+        league,
+        target_team,
+        results,
+    )
     summary_col, matrix_col = st.columns([0.78, 4.5])
+    with summary_col:
+        _render_magic_scenario_result(
+            scenario,
+            reset_counter_key,
+            year,
+            league,
+            target_team,
+        )
     with matrix_col:
         st.markdown("<div class='magic-matrix-marker'></div>", unsafe_allow_html=True)
         toggle_label = "− 過去日を隠す" if st.session_state[show_past_key] else "＋ 過去日を表示"
@@ -630,21 +648,6 @@ def _render_magic_analysis(
             _render_magic_matrix_header(league)
         with st.container(height=720, border=True):
             results = _render_magic_game_matrix(matrix_schedule, result_state_key, league)
-    scenario = analyze_magic_scenario(
-        standings,
-        remaining_matrix_schedule,
-        league,
-        target_team,
-        results,
-    )
-    with summary_col:
-        _render_magic_scenario_result(
-            scenario,
-            reset_counter_key,
-            league,
-            target_team,
-            schedule_token,
-        )
     st.markdown("<div class='magic-team-status-title'>チーム別の判定</div>", unsafe_allow_html=True)
     _render_table(_format_magic_team_status_table(scenario.condition_table))
 
@@ -849,32 +852,26 @@ def _result_symbol_for_team(result: str, team: str, home: str) -> str:
     return "未"
 
 
-def _magic_schedule_token(frame: pd.DataFrame) -> str:
-    values = "|".join(
-        f"{index}:{row['Date']}:{row['HomeTeam']}:{row['AwayTeam']}:{row.get('DateLabel', '')}"
-        for index, row in frame.iterrows()
-    )
-    return hashlib.sha1(values.encode("utf-8")).hexdigest()[:10]
-
-
 def _render_magic_scenario_result(
     scenario: MagicScenarioAnalysis,
     reset_counter_key: str,
+    year: int,
     league: str,
     target_team: str,
-    schedule_token: str,
 ) -> None:
     st.markdown("<div class='magic-summary-marker'></div>", unsafe_allow_html=True)
     st.markdown("<div class='magic-summary-title'>判定サマリー</div>", unsafe_allow_html=True)
     metric_cols = st.columns(1)
     metric_cols[0].metric("優勝確認", "優勝" if scenario.is_clinched else "未確定")
     metric_cols[0].metric("マジック点灯確認", "点灯" if scenario.is_lit else "未点灯")
+    metric_cols[0].metric("最短マジック点灯日", _magic_date_display(scenario.first_lit_date))
+    metric_cols[0].metric("最短優勝日", _magic_date_display(scenario.first_clinch_date))
     magic_number = scenario.magic_number
     magic_display = "—" if magic_number is None or not scenario.is_lit else f"M{magic_number}"
     metric_cols[0].metric("マジック数", magic_display)
     if st.button(
         "結果入力をリセット",
-        key=f"magic_game_reset_button_{league}_{target_team}_{schedule_token}",
+        key=f"magic_game_reset_button_{year}_{league}_{target_team}",
         use_container_width=True,
     ):
         st.session_state[reset_counter_key] += 1
