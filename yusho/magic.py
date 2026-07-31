@@ -30,6 +30,9 @@ class MagicScenarioAnalysis:
     current_standings: pd.DataFrame
     condition_table: pd.DataFrame
     timeline: pd.DataFrame
+    first_lit_date: pd.Timestamp | None
+    first_clinch_date: pd.Timestamp | None
+    magic_number: int | None
 
 
 def analyze_magic_scenario(
@@ -71,6 +74,11 @@ def analyze_magic_scenario(
         teams,
         target_team,
     )
+    first_lit_date = _first_timeline_date(timeline, "IsLit")
+    first_clinch_date = _first_timeline_date(timeline, "IsClinched")
+    magic_number = _timeline_value(timeline, first_lit_date, "MagicNumber")
+    if magic_number is None and is_lit:
+        magic_number = _overall_required_wins(condition_table)
 
     current_standings = pd.DataFrame(
         [
@@ -89,6 +97,9 @@ def analyze_magic_scenario(
         current_standings=current_standings,
         condition_table=condition_table,
         timeline=timeline,
+        first_lit_date=first_lit_date,
+        first_clinch_date=first_clinch_date,
+        magic_number=magic_number,
     )
 
 
@@ -383,6 +394,7 @@ def _scenario_timeline(
                 "RemainingGames": len(remaining),
                 "IsLit": is_lit,
                 "IsClinched": is_clinched,
+                "MagicNumber": _overall_required_wins(conditions),
             }
         )
     return pd.DataFrame(rows)
@@ -392,6 +404,26 @@ def _team_remaining(schedule: pd.DataFrame, team: str) -> int:
     if schedule.empty:
         return 0
     return int(((schedule["HomeTeam"] == team) | (schedule["AwayTeam"] == team)).sum())
+
+
+def _first_timeline_date(frame: pd.DataFrame, column: str) -> pd.Timestamp | None:
+    if frame.empty or column not in frame.columns:
+        return None
+    dates = frame.loc[frame[column].fillna(False).astype(bool), "Date"].dropna()
+    return pd.Timestamp(dates.min()) if not dates.empty else None
+
+
+def _timeline_value(
+    frame: pd.DataFrame,
+    target_date: pd.Timestamp | None,
+    column: str,
+) -> int | None:
+    if target_date is None or frame.empty or column not in frame.columns:
+        return None
+    matches = frame[frame["Date"] == pd.Timestamp(target_date)]
+    if matches.empty or pd.isna(matches.iloc[0][column]):
+        return None
+    return int(matches.iloc[0][column])
 
 
 def _direct_remaining(schedule: pd.DataFrame, target_team: str, rival: str) -> int:
