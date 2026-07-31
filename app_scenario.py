@@ -1021,7 +1021,7 @@ def _render_magic_analysis_with_apply(
             st.markdown(
                 "<div class='magic-matrix-help'>"
                 "相手チームの結果は自動表示されます。"
-                "優勝・マジック判定への反映は「入力内容を反映」を押してください。"
+                "表示が揃わない場合も「入力内容を反映」で両チームを揃えて判定します。"
                 "</div>",
                 unsafe_allow_html=True,
             )
@@ -1035,6 +1035,8 @@ def _render_magic_analysis_with_apply(
                     st.session_state.get(draft_state_key, {})
                 )
                 st.session_state[scenario_state_key] = None
+                st.session_state[revision_key] += 1
+                st.rerun()
 
     applied_results = dict(st.session_state.get(applied_state_key, {}))
     scenario = st.session_state.get(scenario_state_key)
@@ -1069,6 +1071,7 @@ def _render_magic_analysis_with_apply(
                 draft_state_key,
                 widget_prefix,
                 league,
+                revision_key,
             )
 
     st.markdown(
@@ -1083,6 +1086,7 @@ def _render_magic_game_matrix_draft(
     draft_state_key: str,
     widget_prefix: str,
     league: str,
+    revision_key: str,
 ) -> None:
     teams = league_teams(league)
     st.session_state.setdefault(draft_state_key, {})
@@ -1182,6 +1186,7 @@ def _render_magic_game_matrix_draft(
                             team,
                             str(game.HomeTeam),
                             widget_key,
+                            revision_key,
                         ),
                     )
     st.session_state[widget_map_key] = widget_map
@@ -1220,6 +1225,7 @@ def _sync_magic_matrix_draft(
     team: str,
     home: str,
     widget_key: str,
+    revision_key: str,
 ) -> None:
     symbol = str(st.session_state.get(widget_key, "未"))
     result = _game_result_from_symbol(symbol, team, home)
@@ -1229,6 +1235,9 @@ def _sync_magic_matrix_draft(
     else:
         draft_results[game_key] = result
     st.session_state[draft_state_key] = draft_results
+    st.session_state[revision_key] = int(
+        st.session_state.get(revision_key, 0)
+    ) + 1
 
 
 def _render_magic_scenario_result_applied(
@@ -2197,6 +2206,24 @@ div[data-testid="stVerticalBlock"]:has(.magic-matrix-header) div[data-testid="st
   line-height: 1.05;
   font-weight: 900;
   text-align: center;
+}}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-header) {{
+  height: 720px !important;
+  max-height: 720px !important;
+  overflow: hidden !important;
+}}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-header) > div {{
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow-y: auto !important;
+  overflow-x: auto !important;
+  scroll-padding-top: 40px;
+}}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-header) > div > div[data-testid="stVerticalBlock"] > div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header) {{
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 1000 !important;
 }}
 .makeup-note {{
   width: fit-content;
