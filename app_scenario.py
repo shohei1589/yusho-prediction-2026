@@ -26,9 +26,8 @@ LEAGUE_LABELS = {
     PACIFIC: "パ・リーグ",
     CENTRAL: "セ・リーグ",
 }
-
-MAGIC_INPUT_DEBOUNCE_SECONDS = 2.0
 LEAGUE_BY_LABEL = {label: code for code, label in LEAGUE_LABELS.items()}
+MAGIC_INPUT_DEBOUNCE_SECONDS = 2.0
 TEAM_ACCENT_COLORS = {
     "G": "#f97316",
     "T": "#facc15",
@@ -596,6 +595,14 @@ def _render_magic_analysis(
     league: str,
     target_team: str,
 ) -> None:
+    return _render_magic_analysis_with_apply(
+        standings,
+        schedule,
+        full_schedule,
+        year,
+        league,
+        target_team,
+    )
     st.subheader("全試合シナリオ確認")
     remaining_matrix_schedule = _magic_matrix_schedule(schedule)
     past_schedule = _magic_past_schedule(full_schedule, league)
@@ -951,6 +958,278 @@ def _render_magic_scenario_result(
         st.session_state[result_state_key] = {}
         st.session_state[scenario_state_key] = None
         st.session_state[pending_updated_key] = 0.0
+        st.session_state[revision_key] += 1
+        st.rerun()
+
+
+def _render_magic_analysis_with_apply(
+    standings: pd.DataFrame,
+    schedule: pd.DataFrame,
+    full_schedule: pd.DataFrame,
+    year: int,
+    league: str,
+    target_team: str,
+) -> None:
+    st.subheader("全試合シナリオ確認")
+    remaining_matrix_schedule = _magic_matrix_schedule(schedule)
+    past_schedule = _magic_past_schedule(full_schedule, league)
+    if remaining_matrix_schedule.empty and past_schedule.empty:
+        st.info("入力できる残り試合はありません。")
+        return
+
+    show_past_key = f"magic_show_past_{league}_{target_team}"
+    st.session_state.setdefault(show_past_key, False)
+    past_matrix_schedule = _magic_matrix_schedule(past_schedule)
+    if st.session_state[show_past_key] and not past_matrix_schedule.empty:
+        matrix_schedule = pd.concat(
+            [past_matrix_schedule, remaining_matrix_schedule],
+            ignore_index=True,
+        )
+        matrix_schedule = _magic_matrix_schedule(matrix_schedule)
+    else:
+        matrix_schedule = remaining_matrix_schedule
+
+    applied_state_key = f"magic_matrix_results_{year}_{league}_{target_team}"
+    draft_state_key = f"magic_matrix_draft_{year}_{league}_{target_team}"
+    scenario_state_key = f"magic_matrix_scenario_{year}_{league}_{target_team}"
+    revision_key = f"magic_matrix_revision_{year}_{league}_{target_team}"
+    st.session_state.setdefault(applied_state_key, {})
+    st.session_state.setdefault(
+        draft_state_key,
+        dict(st.session_state.get(applied_state_key, {})),
+    )
+    st.session_state.setdefault(revision_key, 0)
+
+    summary_col, matrix_col = st.columns([0.78, 4.5])
+    with matrix_col:
+        st.markdown("<div class='magic-matrix-marker'></div>", unsafe_allow_html=True)
+        control_cols = st.columns([1, 1])
+        with control_cols[0]:
+            toggle_label = (
+                "− 過去日を隠す"
+                if st.session_state[show_past_key]
+                else "＋ 過去日を表示"
+            )
+            if st.button(
+                toggle_label,
+                key=f"magic_past_toggle_{league}_{target_team}",
+                use_container_width=False,
+            ):
+                st.session_state[show_past_key] = not st.session_state[show_past_key]
+                st.rerun()
+        with control_cols[1]:
+            if st.button(
+                "入力内容を反映",
+                key=f"magic_apply_button_{year}_{league}_{target_team}",
+                use_container_width=False,
+            ):
+                st.session_state[applied_state_key] = dict(
+                    st.session_state.get(draft_state_key, {})
+                )
+                st.session_state[scenario_state_key] = None
+
+    applied_results = dict(st.session_state.get(applied_state_key, {}))
+    scenario = st.session_state.get(scenario_state_key)
+    if scenario is None:
+        scenario = analyze_magic_scenario(
+            standings,
+            remaining_matrix_schedule,
+            league,
+            target_team,
+            applied_results,
+            full_schedule,
+        )
+        st.session_state[scenario_state_key] = scenario
+
+    widget_prefix = f"{draft_state_key}_{st.session_state[revision_key]}"
+    with summary_col:
+        _render_magic_scenario_result_applied(
+            scenario,
+            draft_state_key,
+            applied_state_key,
+            scenario_state_key,
+            revision_key,
+            year,
+            league,
+            target_team,
+        )
+    with matrix_col:
+        with st.container(height=720, border=True):
+            _render_magic_matrix_header(league)
+            _render_magic_game_matrix_draft(
+                matrix_schedule,
+                draft_state_key,
+                widget_prefix,
+                league,
+            )
+
+    st.markdown(
+        "<div class='magic-team-status-title'>チーム別の判定</div>",
+        unsafe_allow_html=True,
+    )
+    _render_table(_format_magic_team_status_table(scenario.condition_table))
+
+
+def _render_magic_game_matrix_draft(
+    schedule: pd.DataFrame,
+    draft_state_key: str,
+    widget_prefix: str,
+    league: str,
+) -> None:
+    teams = league_teams(league)
+    st.session_state.setdefault(draft_state_key, {})
+    draft_results = st.session_state[draft_state_key]
+    schedule_by_date = schedule.groupby("Date", sort=True)
+    column_widths = [1.1] + [1.0, 0.72] * len(teams)
+
+    for game_date, group in schedule_by_date:
+        row_columns = st.columns(column_widths)
+        date_labels = [
+            str(value).strip()
+            for value in group["DateLabel"]
+            if str(value).strip()
+        ]
+        timestamp = pd.Timestamp(game_date)
+        date_label = (
+            date_labels[0]
+            if date_labels
+            else f"{timestamp.month}月{timestamp.day}日"
+        )
+        row_columns[0].markdown(
+            f"<div class='magic-matrix-date'>{date_label}</div>",
+            unsafe_allow_html=True,
+        )
+        for team, opponent_column, result_column in zip(
+            teams,
+            row_columns[1::2],
+            row_columns[2::2],
+        ):
+            team_games = group[
+                (group["HomeTeam"] == team) | (group["AwayTeam"] == team)
+            ]
+            if team_games.empty:
+                opponent_column.markdown(
+                    "<div class='magic-matrix-empty'>—</div>",
+                    unsafe_allow_html=True,
+                )
+                result_column.markdown(
+                    "<div class='magic-matrix-empty'> </div>",
+                    unsafe_allow_html=True,
+                )
+                continue
+
+            for game in team_games.itertuples(index=False):
+                game_key = str(game.GameKey)
+                opponent = str(
+                    game.AwayTeam if game.HomeTeam == team else game.HomeTeam
+                )
+                opponent_label = "未定" if opponent == "TBD" else opponent
+                opponent_color = TEAM_MATRIX_HEADER_COLORS.get(
+                    opponent,
+                    "#172033",
+                )
+                with opponent_column:
+                    st.markdown(
+                        "<div class='magic-matrix-opponent' "
+                        f"style='color:{opponent_color};'>{opponent_label}</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                if bool(getattr(game, "IsPast", False)):
+                    past_symbol = _official_result_symbol(game, team)
+                    result_column.markdown(
+                        f"<div class='magic-matrix-result-readonly'>{past_symbol}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    continue
+
+                widget_key = _magic_result_widget_key(
+                    widget_prefix,
+                    game_key,
+                    team,
+                )
+                current_result = str(draft_results.get(game_key, "未入力"))
+                default_symbol = _result_symbol_for_team(
+                    current_result,
+                    team,
+                    game.HomeTeam,
+                )
+                if widget_key not in st.session_state:
+                    st.session_state[widget_key] = default_symbol
+                opponent_widget_key = _magic_result_widget_key(
+                    widget_prefix,
+                    game_key,
+                    opponent,
+                )
+                with result_column:
+                    st.selectbox(
+                        "結果",
+                        options=["未", "○", "●", "△"],
+                        key=widget_key,
+                        label_visibility="collapsed",
+                        on_change=_sync_magic_matrix_draft,
+                        args=(
+                            draft_state_key,
+                            game_key,
+                            team,
+                            str(game.HomeTeam),
+                            widget_key,
+                            opponent_widget_key,
+                            opponent,
+                        ),
+                    )
+
+
+def _sync_magic_matrix_draft(
+    draft_state_key: str,
+    game_key: str,
+    team: str,
+    home: str,
+    widget_key: str,
+    opponent_widget_key: str,
+    opponent_team: str,
+) -> None:
+    symbol = str(st.session_state.get(widget_key, "未"))
+    result = _game_result_from_symbol(symbol, team, home)
+    draft_results = dict(st.session_state.get(draft_state_key, {}))
+    if result == "未入力":
+        draft_results.pop(game_key, None)
+    else:
+        draft_results[game_key] = result
+    st.session_state[draft_state_key] = draft_results
+    st.session_state[opponent_widget_key] = (
+        _result_symbol_for_team(result, opponent_team, home)
+        if result != "未入力"
+        else "未"
+    )
+
+
+def _render_magic_scenario_result_applied(
+    scenario: MagicScenarioAnalysis,
+    draft_state_key: str,
+    applied_state_key: str,
+    scenario_state_key: str,
+    revision_key: str,
+    year: int,
+    league: str,
+    target_team: str,
+) -> None:
+    st.markdown("<div class='magic-summary-marker'></div>", unsafe_allow_html=True)
+    st.markdown("<div class='magic-summary-title'>判定サマリー</div>", unsafe_allow_html=True)
+    metric_cols = st.columns(1)
+    metric_cols[0].metric("優勝確認", "優勝" if scenario.is_clinched else "未確定")
+    metric_cols[0].metric("マジック点灯確認", "点灯" if scenario.is_lit else "未点灯")
+    magic_number = scenario.magic_number
+    magic_display = "—" if magic_number is None or not scenario.is_lit else f"M{magic_number}"
+    metric_cols[0].metric("マジック数", magic_display)
+    if st.button(
+        "結果入力をリセット",
+        key=f"magic_game_reset_button_{year}_{league}_{target_team}",
+        use_container_width=True,
+    ):
+        st.session_state[draft_state_key] = {}
+        st.session_state[applied_state_key] = {}
+        st.session_state[scenario_state_key] = None
         st.session_state[revision_key] += 1
         st.rerun()
 
@@ -1586,10 +1865,13 @@ div[data-testid="stAlert"] p {{
   white-space: nowrap;
 }}
 .magic-matrix-header {{
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  min-height: 32px;
+  position: static;
+  min-height: 40px;
+  height: 40px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 0.16rem 0.12rem;
   border: 1px solid {matrix_border};
   background: {surface_soft};
@@ -1720,10 +2002,12 @@ div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) {{
   padding-right: 0 !important;
 }}
 div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header) {{
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  background: {surface};
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 1000 !important;
+  isolation: isolate;
+  min-height: 40px !important;
+  background: {surface} !important;
   box-shadow: 0 1px 0 {matrix_border};
 }}
 div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header) > div[data-testid="column"],
@@ -1764,10 +2048,11 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-date) > div {{
   overflow: visible !important;
 }}
 div[data-testid="stVerticalBlock"]:has(.magic-matrix-header) > div[data-testid="stHorizontalBlock"]:first-child {{
-  position: sticky;
-  top: 0;
-  z-index: 25;
-  background: {surface_soft};
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 1000 !important;
+  min-height: 40px !important;
+  background: {surface} !important;
 }}
 div[data-testid="stVerticalBlock"]:has(.magic-matrix-header) div[data-testid="stSelectbox"] > div {{
   min-height: 28px;
