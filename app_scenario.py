@@ -17,12 +17,7 @@ from yusho.npb_client import (
     fetch_standings,
     schedule_to_daily_opponents,
 )
-from yusho.magic import (
-    MagicAnalysis,
-    MagicScenarioAnalysis,
-    analyze_magic,
-    analyze_magic_scenario,
-)
+from yusho.magic import MagicScenarioAnalysis, analyze_magic_scenario
 from yusho.simulation import SimulationResult, run_simulations
 from yusho.teams import CENTRAL, PACIFIC, league_teams, team_label
 
@@ -294,8 +289,7 @@ def _render_summary(
             _render_table(_format_final_standings(result.final_standings))
 
     with tab_magic:
-        magic = analyze_magic(standings, schedule, league, target_team)
-        _render_magic_analysis(magic, target_team, standings, schedule, league)
+        _render_magic_analysis(standings, schedule, league, target_team)
 
     with tab_standings:
         left, right = st.columns([3, 2])
@@ -564,37 +558,14 @@ def _render_table(frame: pd.DataFrame) -> None:
 
 
 def _render_magic_analysis(
-    magic: MagicAnalysis,
-    target_team: str,
     standings: pd.DataFrame,
     schedule: pd.DataFrame,
     league: str,
+    target_team: str,
 ) -> None:
-    target_name = team_label(target_team)
-    required = (
-        "不可"
-        if magic.required_wins is None
-        else "確定済み"
-        if magic.required_wins == 0
-        else f"+{magic.required_wins}勝"
-    )
-    status = "優勝確定" if magic.is_clinched else "未確定"
-    lit_status = "点灯圏" if magic.is_lit else "未点灯"
-
-    metric_cols = st.columns([1, 1, 1])
-    metric_cols[0].metric(f"{target_name} 優勝保証ライン", required)
-    metric_cols[1].metric("現在判定", status)
-    metric_cols[2].metric("マジック目安", lit_status)
-
-    st.subheader("優勝保証ライン")
-    _render_table(_format_magic_clinch_table(magic.clinch_table))
-    st.subheader("マジック点灯チェック")
-    _render_table(_format_magic_lighting_table(magic.lighting_table))
-
-    st.divider()
     st.subheader("全試合シナリオ確認")
     st.caption(
-        "Excelのように残り試合の結果を入力できます。未入力の試合は、条件判定では残り試合として扱います。"
+        "残り試合の結果をExcel風に入力します。球団ごとのセルには対戦相手と、その球団から見た○●△を表示します。"
     )
     matrix_schedule = _magic_matrix_schedule(schedule)
     if matrix_schedule.empty:
@@ -605,26 +576,15 @@ def _render_magic_analysis(
     reset_counter_key = f"magic_game_reset_{league}_{target_team}_{schedule_token}"
     if reset_counter_key not in st.session_state:
         st.session_state[reset_counter_key] = 0
-    reset_col, note_col = st.columns([1.2, 3.8])
-    with reset_col:
-        if st.button(
-            "結果入力をリセット",
-            key=f"magic_game_reset_button_{league}_{target_team}_{schedule_token}",
-            use_container_width=True,
-        ):
-            st.session_state[reset_counter_key] += 1
-            st.rerun()
-    with note_col:
-        st.markdown(
-            "<div class='scenario-note'>各球団の視点で ○=勝、●=敗、△=引分。リーグ内対戦は相手側にも自動反映されます。</div>",
-            unsafe_allow_html=True,
-        )
-
     result_state_key = (
         f"magic_matrix_results_{league}_{target_team}_{schedule_token}_"
         f"{st.session_state[reset_counter_key]}"
     )
-    results = _render_magic_game_matrix(matrix_schedule, result_state_key, league)
+    summary_col, matrix_col = st.columns([1, 3.25])
+    with matrix_col:
+        st.markdown("<div class='magic-matrix-marker'></div>", unsafe_allow_html=True)
+        with st.container(height=720, border=True):
+            results = _render_magic_game_matrix(matrix_schedule, result_state_key, league)
     scenario = analyze_magic_scenario(
         standings,
         matrix_schedule,
@@ -632,7 +592,14 @@ def _render_magic_analysis(
         target_team,
         results,
     )
-    _render_magic_scenario_result(scenario, target_team)
+    with summary_col:
+        _render_magic_scenario_result(
+            scenario,
+            reset_counter_key,
+            league,
+            target_team,
+            schedule_token,
+        )
 
 
 def _magic_matrix_schedule(schedule: pd.DataFrame) -> pd.DataFrame:
@@ -661,43 +628,55 @@ def _render_magic_game_matrix(
     results = st.session_state[result_state_key]
     schedule_by_date = schedule.groupby("Date", sort=True)
 
-    header = st.columns([1.45] + [1] * len(teams))
+    column_widths = [1.1] + [1.0, 0.72] * len(teams)
+    header = st.columns(column_widths)
     header[0].markdown("<div class='magic-matrix-header'>日付</div>", unsafe_allow_html=True)
-    for column, team in zip(header[1:], teams):
-        column.markdown(
-            f"<div class='magic-matrix-header'>{team_label(team)}</div>",
+    for team, opponent_column, result_column in zip(teams, header[1::2], header[2::2]):
+        opponent_column.markdown(
+            f"<div class='magic-matrix-header'>{team}</div>",
+            unsafe_allow_html=True,
+        )
+        result_column.markdown(
+            "<div class='magic-matrix-header magic-matrix-result-header'>結果</div>",
             unsafe_allow_html=True,
         )
 
     for game_date, group in schedule_by_date:
-        row_columns = st.columns([1.45] + [1] * len(teams))
+        row_columns = st.columns(column_widths)
         date_labels = [str(value).strip() for value in group["DateLabel"] if str(value).strip()]
-        date_label = date_labels[0] if date_labels else pd.Timestamp(game_date).strftime("%Y-%m-%d")
+        timestamp = pd.Timestamp(game_date)
+        date_label = date_labels[0] if date_labels else f"{timestamp.month}月{timestamp.day}日"
         row_columns[0].markdown(
             f"<div class='magic-matrix-date'>{date_label}</div>",
             unsafe_allow_html=True,
         )
-        for column, team in zip(row_columns[1:], teams):
+        for team, opponent_column, result_column in zip(
+            teams,
+            row_columns[1::2],
+            row_columns[2::2],
+        ):
             team_games = group[
                 (group["HomeTeam"] == team) | (group["AwayTeam"] == team)
             ]
             if team_games.empty:
-                column.markdown("<div class='magic-matrix-empty'>—</div>", unsafe_allow_html=True)
+                opponent_column.markdown("<div class='magic-matrix-empty'>—</div>", unsafe_allow_html=True)
+                result_column.markdown("<div class='magic-matrix-empty'> </div>", unsafe_allow_html=True)
                 continue
-            with column:
-                for game in team_games.itertuples(index=False):
-                    game_key = str(game.GameKey)
-                    opponent = str(game.AwayTeam if game.HomeTeam == team else game.HomeTeam)
-                    opponent_label = _schedule_team_label(opponent)
+            for game in team_games.itertuples(index=False):
+                game_key = str(game.GameKey)
+                opponent = str(game.AwayTeam if game.HomeTeam == team else game.HomeTeam)
+                opponent_label = "未定" if opponent == "TBD" else opponent
+                with opponent_column:
                     st.markdown(
                         f"<div class='magic-matrix-opponent'>{opponent_label}</div>",
                         unsafe_allow_html=True,
                     )
-                    widget_key = _magic_result_widget_key(result_state_key, game_key, team)
-                    current_result = str(results.get(game_key, "未入力"))
-                    default_symbol = _result_symbol_for_team(current_result, team, game.HomeTeam)
-                    if widget_key not in st.session_state:
-                        st.session_state[widget_key] = default_symbol
+                widget_key = _magic_result_widget_key(result_state_key, game_key, team)
+                current_result = str(results.get(game_key, "未入力"))
+                default_symbol = _result_symbol_for_team(current_result, team, game.HomeTeam)
+                if widget_key not in st.session_state:
+                    st.session_state[widget_key] = default_symbol
+                with result_column:
                     st.selectbox(
                         "結果",
                         options=["未入力", "○", "△", "●"],
@@ -774,39 +753,35 @@ def _magic_schedule_token(frame: pd.DataFrame) -> str:
 
 def _render_magic_scenario_result(
     scenario: MagicScenarioAnalysis,
+    reset_counter_key: str,
+    league: str,
     target_team: str,
+    schedule_token: str,
 ) -> None:
-    entered = scenario.entered_games
-    total = scenario.total_games
-    remaining = max(0, total - entered)
-    metric_cols = st.columns([1, 1, 1, 1, 1])
+    st.markdown("<div class='magic-summary-title'>判定サマリー</div>", unsafe_allow_html=True)
+    metric_cols = st.columns(1)
     metric_cols[0].metric("優勝確認", "優勝" if scenario.is_clinched else "未確定")
-    metric_cols[1].metric("最短優勝日", _magic_date_display(scenario.first_clinch_date))
-    metric_cols[2].metric("マジック確認", "点灯" if scenario.is_lit else "未点灯")
-    metric_cols[3].metric("最短点灯日", _magic_date_display(scenario.first_lit_date))
+    metric_cols[0].metric("マジック点灯確認", "点灯" if scenario.is_lit else "未点灯")
     magic_number = scenario.magic_number
     magic_display = "—" if magic_number is None or not scenario.is_lit else f"M{magic_number}"
-    metric_cols[4].metric("点灯時のマジック数", magic_display)
-
-    if remaining:
-        st.caption(
-            f"入力済み試合: {entered} / {total}。未入力の{remaining}試合は、条件判定では残り試合として扱っています。"
-        )
+    metric_cols[0].metric("マジック数", magic_display)
+    if st.button(
+        "結果入力をリセット",
+        key=f"magic_game_reset_button_{league}_{target_team}_{schedule_token}",
+        use_container_width=True,
+    ):
+        st.session_state[reset_counter_key] += 1
+        st.rerun()
+    st.caption(
+        "○=勝、●=敗、△=引分。リーグ内対戦は相手側にも自動反映されます。"
+    )
+    st.caption("球団欄はExcelに合わせてNPBの略称で表示しています。")
     st.caption(
         "マジック数は、対象球団が追加で勝つ必要のある最小勝数を、相手球団の残り試合を含む最高勝率との比較で算出したアプリ内指標です。NPB公式発表のマジック数と一致しない場合があります。"
     )
     st.caption(
         "点灯判定は、対象球団が残りの直接対決を全敗し、それ以外を勝利、各相手球団が残り試合を全勝しても、対象球団の勝率が上回るかで確認しています。"
     )
-
-    st.subheader("入力結果反映後の勝敗表")
-    _render_table(_format_magic_scenario_standings(scenario.current_standings))
-    st.subheader("入力時点のマジック点灯条件")
-    _render_table(_format_magic_scenario_lighting_table(scenario.condition_table))
-    st.subheader("入力時点の優勝条件")
-    _render_table(_format_magic_scenario_clinch_table(scenario.condition_table))
-    st.subheader("日付ごとの判定")
-    _render_table(_format_magic_timeline(scenario.timeline))
 
 
 def _magic_date_display(value: pd.Timestamp | None) -> str:
@@ -1423,14 +1398,34 @@ div[data-testid="stAlert"] p {{
   white-space: nowrap;
 }}
 .magic-matrix-header {{
+  position: sticky;
+  top: 0;
+  z-index: 10;
   min-height: 28px;
   padding: 0.22rem 0.15rem;
   border-top: 1px solid {border};
   border-bottom: 1px solid {border};
+  background: {surface_soft};
   color: {text};
   text-align: center;
   font-size: 0.78rem;
   font-weight: 900;
+}}
+.magic-matrix-result-header {{
+  color: {muted};
+  font-size: 0.68rem;
+}}
+.magic-summary-title {{
+  margin: 0 0 0.6rem;
+  color: {text};
+  font-size: 1.08rem;
+  font-weight: 900;
+}}
+.magic-matrix-marker + div[data-testid="stVerticalBlock"] {{
+  min-width: 900px;
+}}
+.magic-matrix-marker ~ div[data-testid="stHorizontalBlock"] {{
+  min-width: 900px;
 }}
 .magic-matrix-date {{
   min-height: 52px;
@@ -1471,6 +1466,9 @@ div[data-testid="stSelectbox"] [data-baseweb="select"] > div {{
   font-size: 0.76rem;
   font-weight: 800;
   text-align: center;
+}}
+div[data-testid="stVerticalBlock"]:has(.magic-matrix-marker) {{
+  overflow-x: auto;
 }}
 .makeup-note {{
   width: fit-content;
