@@ -626,8 +626,9 @@ def _render_magic_analysis(
         ):
             st.session_state[show_past_key] = not st.session_state[show_past_key]
             st.rerun()
-        with st.container(height=720, border=True):
+        with st.container():
             _render_magic_matrix_header(league)
+        with st.container(height=720, border=True):
             results = _render_magic_game_matrix(matrix_schedule, result_state_key, league)
     scenario = analyze_magic_scenario(
         standings,
@@ -1646,11 +1647,12 @@ div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) {{
 div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header) {{
   position: sticky;
   top: 0;
-  z-index: 50;
+  z-index: 100;
   min-width: 0 !important;
-  margin-left: 0 !important;
-  width: 100% !important;
+  margin-left: 16px !important;
+  width: calc(100% - 32px) !important;
   background: {surface};
+  box-shadow: 0 1px 0 {matrix_border};
 }}
 div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header) > div[data-testid="column"],
 div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) > div[data-testid="column"] {{
