@@ -647,33 +647,14 @@ def _render_magic_analysis(
         ):
             st.session_state[show_past_key] = not st.session_state[show_past_key]
             st.rerun()
-        with st.form(
-            key=f"magic_matrix_form_{year}_{league}_{target_team}",
-            clear_on_submit=False,
-            border=False,
-        ):
-            submitted = st.form_submit_button(
-                "入力内容を反映",
-                use_container_width=False,
-            )
-            with st.container():
-                _render_magic_matrix_header(league)
-            with st.container(height=720, border=True):
-                _render_magic_game_matrix(
-                    matrix_schedule,
-                    result_state_key,
-                    widget_prefix,
-                    league,
-                )
-        if submitted:
-            st.session_state[result_state_key] = _collect_magic_matrix_results(
+        with st.container(height=720, border=True):
+            _render_magic_matrix_header(league)
+            _render_magic_game_matrix(
                 matrix_schedule,
-                widget_prefix,
                 result_state_key,
+                widget_prefix,
                 league,
             )
-            st.session_state[revision_key] += 1
-            st.rerun()
     st.markdown("<div class='magic-team-status-title'>チーム別の判定</div>", unsafe_allow_html=True)
     _render_table(_format_magic_team_status_table(scenario.condition_table))
 
@@ -789,6 +770,20 @@ def _render_magic_game_matrix(
                         options=["未", "○", "●", "△"],
                         key=widget_key,
                         label_visibility="collapsed",
+                        on_change=_sync_magic_matrix_result,
+                        args=(
+                            result_state_key,
+                            game_key,
+                            team,
+                            str(game.HomeTeam),
+                            widget_key,
+                            _magic_result_widget_key(
+                                widget_prefix,
+                                game_key,
+                                opponent,
+                            ),
+                            opponent,
+                        ),
                     )
     return {str(key): str(value) for key, value in results.items()}
 
@@ -826,47 +821,29 @@ def _magic_result_widget_key(result_state_key: str, game_key: str, team: str) ->
     return f"{result_state_key}_{game_key}_{team}"
 
 
-def _collect_magic_matrix_results(
-    schedule: pd.DataFrame,
-    widget_prefix: str,
+def _sync_magic_matrix_result(
     result_state_key: str,
-    league: str,
-) -> dict[str, str]:
-    previous_results = dict(st.session_state.get(result_state_key, {}))
-    collected: dict[str, str] = {}
-    teams = league_teams(league)
-    for game in schedule.itertuples(index=False):
-        if bool(getattr(game, "IsPast", False)):
-            continue
-        game_key = str(game.GameKey)
-        home = str(game.HomeTeam)
-        away = str(game.AwayTeam)
-        if home not in teams or away not in teams:
-            continue
-        home_key = _magic_result_widget_key(widget_prefix, game_key, home)
-        away_key = _magic_result_widget_key(widget_prefix, game_key, away)
-        home_symbol = str(st.session_state.get(home_key, "未"))
-        away_symbol = str(st.session_state.get(away_key, "未"))
-        previous_result = str(previous_results.get(game_key, "未入力"))
-        previous_home = _result_symbol_for_team(previous_result, home, home)
-        previous_away = _result_symbol_for_team(previous_result, away, home)
-        home_changed = home_symbol != previous_home
-        away_changed = away_symbol != previous_away
-        home_result = _game_result_from_symbol(home_symbol, home, home)
-        away_result = _game_result_from_symbol(away_symbol, away, home)
-        if home_changed and not away_changed:
-            result = home_result
-        elif away_changed and not home_changed:
-            result = away_result
-        elif home_result == away_result:
-            result = home_result
-        elif home_result != "未入力":
-            result = home_result
-        else:
-            result = away_result
-        if result != "未入力":
-            collected[game_key] = result
-    return collected
+    game_key: str,
+    team: str,
+    home: str,
+    widget_key: str,
+    opponent_widget_key: str,
+    opponent_team: str,
+) -> None:
+    symbol = str(st.session_state.get(widget_key, "未"))
+    result = _game_result_from_symbol(symbol, team, home)
+    results = dict(st.session_state.get(result_state_key, {}))
+    if result == "未入力":
+        results.pop(game_key, None)
+        st.session_state[opponent_widget_key] = "未"
+    else:
+        results[game_key] = result
+        st.session_state[opponent_widget_key] = _result_symbol_for_team(
+            result,
+            opponent_team,
+            home,
+        )
+    st.session_state[result_state_key] = results
 
 
 def _game_result_from_symbol(symbol: str, team: str, home: str) -> str:
@@ -1671,14 +1648,18 @@ div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header),
 div[data-testid="stHorizontalBlock"]:has(.magic-matrix-date) {{
   column-gap: 0 !important;
   align-items: stretch;
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
 }}
 div[data-testid="stHorizontalBlock"]:has(.magic-matrix-header) {{
   position: sticky;
   top: 0;
   z-index: 100;
-  min-width: 0 !important;
-  margin-left: 16px !important;
-  width: calc(100% - 32px) !important;
   background: {surface};
   box-shadow: 0 1px 0 {matrix_border};
 }}
