@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from copy import deepcopy
+from datetime import date
 
 import pandas as pd
 
@@ -14,6 +16,80 @@ class MagicAnalysis:
     is_lit: bool
     clinch_table: pd.DataFrame
     lighting_table: pd.DataFrame
+
+
+GAME_RESULT_OPTIONS = ("未入力", "ホーム勝", "引分", "ビジター勝")
+
+
+@dataclass(frozen=True)
+class MagicScenarioAnalysis:
+    entered_games: int
+    total_games: int
+    is_lit: bool
+    is_clinched: bool
+    current_standings: pd.DataFrame
+    condition_table: pd.DataFrame
+    timeline: pd.DataFrame
+
+
+def analyze_magic_scenario(
+    standings: pd.DataFrame,
+    schedule: pd.DataFrame,
+    league: str,
+    target_team: str,
+    results: dict[str, str] | None = None,
+) -> MagicScenarioAnalysis:
+    """Evaluate a game-by-game result scenario for magic and clinching checks.
+
+    Entered results are applied in date order. Unentered games remain in the
+    worst/best-case calculation, so the checks are also useful mid-entry.
+    """
+    teams = league_teams(league)
+    base_records = _records_from_standings(standings, teams)
+    frame = _prepare_schedule(schedule)
+    normalized_results = {
+        str(key): _normalize_game_result(value)
+        for key, value in (results or {}).items()
+    }
+
+    current_records, remaining = _scenario_state(
+        base_records,
+        frame,
+        normalized_results,
+        cutoff=None,
+    )
+    condition_table, is_lit, is_clinched = _condition_table(
+        current_records,
+        remaining,
+        teams,
+        target_team,
+    )
+    timeline = _scenario_timeline(
+        base_records,
+        frame,
+        normalized_results,
+        teams,
+        target_team,
+    )
+
+    current_standings = pd.DataFrame(
+        [
+            {"Team": team, **current_records[team]}
+            for team in teams
+        ]
+    )
+    entered_games = sum(
+        value != "未入力" for value in normalized_results.values()
+    )
+    return MagicScenarioAnalysis(
+        entered_games=entered_games,
+        total_games=len(frame),
+        is_lit=is_lit,
+        is_clinched=is_clinched,
+        current_standings=current_standings,
+        condition_table=condition_table,
+        timeline=timeline,
+    )
 
 
 def analyze_magic(
@@ -105,6 +181,217 @@ def _remaining_by_team(schedule: pd.DataFrame, teams: tuple[str, ...]) -> dict[s
                 ((schedule["HomeTeam"] == team) | (schedule["AwayTeam"] == team)).sum()
             )
     return remaining
+
+
+def _records_from_standings(
+    standings: pd.DataFrame,
+    teams: tuple[str, ...],
+) -> dict[str, dict[str, int]]:
+    records: dict[str, dict[str, int]] = {}
+    for row in standings.itertuples(index=False):
+        team = str(row.Team)
+        if team not in teams:
+            continue
+        records[team] = {
+            "Wins": int(row.Wins),
+            "Losses": int(row.Losses),
+            "Ties": int(row.Ties),
+        }
+    for team in teams:
+        records.setdefault(team, {"Wins": 0, "Losses": 0, "Ties": 0})
+    return records
+
+
+def _prepare_schedule(schedule: pd.DataFrame) -> pd.DataFrame:
+    if schedule.empty:
+        return pd.DataFrame(columns=["GameKey", "Date", "DateLabel", "HomeTeam", "AwayTeam"])
+    frame = schedule.copy().reset_index(drop=True)
+    if "GameKey" not in frame.columns:
+        frame["GameKey"] = [str(index) for index in frame.index]
+    frame["GameKey"] = frame["GameKey"].astype(str)
+    frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+    if "DateLabel" not in frame.columns:
+        frame["DateLabel"] = ""
+    frame["DateLabel"] = frame["DateLabel"].fillna("").astype(str).str.strip()
+    return frame.sort_values(["Date", "GameKey"], na_position="last").reset_index(drop=True)
+
+
+def _normalize_game_result(value: object) -> str:
+    text = str(value).strip()
+    return text if text in GAME_RESULT_OPTIONS else "未入力"
+
+
+def _scenario_state(
+    base_records: dict[str, dict[str, int]],
+    schedule: pd.DataFrame,
+    results: dict[str, str],
+    cutoff: pd.Timestamp | date | None,
+) -> tuple[dict[str, dict[str, int]], pd.DataFrame]:
+    records = deepcopy(base_records)
+    applied_indices: list[int] = []
+    for index, row in schedule.iterrows():
+        game_date = row.get("Date")
+        if cutoff is not None and (
+            pd.isna(game_date) or pd.Timestamp(game_date) > pd.Timestamp(cutoff)
+        ):
+            continue
+        key = str(row.get("GameKey", index))
+        result = _normalize_game_result(results.get(key, "未入力"))
+        if result == "未入力":
+            continue
+        _apply_game_result(
+            records,
+            str(row.get("HomeTeam", "")),
+            str(row.get("AwayTeam", "")),
+            result,
+        )
+        applied_indices.append(index)
+
+    if applied_indices:
+        remaining = schedule.drop(index=applied_indices).reset_index(drop=True)
+    else:
+        remaining = schedule.copy().reset_index(drop=True)
+    return records, remaining
+
+
+def _apply_game_result(
+    records: dict[str, dict[str, int]],
+    home: str,
+    away: str,
+    result: str,
+) -> None:
+    if result == "ホーム勝":
+        _add_result(records, home, "Wins")
+        _add_result(records, away, "Losses")
+    elif result == "ビジター勝":
+        _add_result(records, home, "Losses")
+        _add_result(records, away, "Wins")
+    elif result == "引分":
+        _add_result(records, home, "Ties")
+        _add_result(records, away, "Ties")
+
+
+def _add_result(
+    records: dict[str, dict[str, int]],
+    team: str,
+    field: str,
+) -> None:
+    if team in records:
+        records[team][field] += 1
+
+
+def _condition_table(
+    records: dict[str, dict[str, int]],
+    remaining: pd.DataFrame,
+    teams: tuple[str, ...],
+    target_team: str,
+) -> tuple[pd.DataFrame, bool, bool]:
+    rows: list[dict[str, object]] = []
+    for rival in teams:
+        if rival == target_team:
+            continue
+        target_remaining = _team_remaining(remaining, target_team)
+        rival_remaining = _team_remaining(remaining, rival)
+        direct_remaining = _direct_remaining(remaining, target_team, rival)
+        target = records[target_team]
+        rival_record = records[rival]
+
+        target_scenario_wins = target["Wins"] + max(0, target_remaining - direct_remaining)
+        target_scenario_losses = target["Losses"] + direct_remaining
+        target_scenario_rate = _win_rate(target_scenario_wins, target_scenario_losses)
+        rival_max_rate = _win_rate(
+            rival_record["Wins"] + rival_remaining,
+            rival_record["Losses"],
+        )
+        target_min_rate = _win_rate(
+            target["Wins"],
+            target["Losses"] + target_remaining,
+        )
+        rival_max_rate_for_clinch = _win_rate(
+            rival_record["Wins"] + rival_remaining,
+            rival_record["Losses"],
+        )
+        needed_wins, _, _ = _needed_wins_vs_rival(
+            target,
+            rival_record,
+            target_remaining,
+            rival_remaining,
+            direct_remaining,
+        )
+        rows.append(
+            {
+                "Team": rival,
+                "TargetRemaining": target_remaining,
+                "RivalRemaining": rival_remaining,
+                "DirectRemaining": direct_remaining,
+                "NeededWins": needed_wins,
+                "TargetScenarioRate": target_scenario_rate,
+                "RivalMaxRate": rival_max_rate,
+                "TargetMinRate": target_min_rate,
+                "RivalMaxRateForClinch": rival_max_rate_for_clinch,
+                "IsLit": target_scenario_rate > rival_max_rate,
+                "IsClinched": target_min_rate > rival_max_rate_for_clinch,
+            }
+        )
+    table = pd.DataFrame(rows)
+    is_lit = bool(table["IsLit"].all()) if not table.empty else False
+    is_clinched = bool(table["IsClinched"].all()) if not table.empty else False
+    return table, is_lit, is_clinched
+
+
+def _scenario_timeline(
+    base_records: dict[str, dict[str, int]],
+    schedule: pd.DataFrame,
+    results: dict[str, str],
+    teams: tuple[str, ...],
+    target_team: str,
+) -> pd.DataFrame:
+    if schedule.empty:
+        return pd.DataFrame()
+    rows: list[dict[str, object]] = []
+    dated_schedule = schedule.dropna(subset=["Date"])
+    for game_date in dated_schedule["Date"].drop_duplicates().sort_values():
+        records, remaining = _scenario_state(
+            base_records,
+            schedule,
+            results,
+            cutoff=game_date,
+        )
+        conditions, is_lit, is_clinched = _condition_table(
+            records,
+            remaining,
+            teams,
+            target_team,
+        )
+        day_rows = dated_schedule[dated_schedule["Date"] == game_date]
+        labels = [label for label in day_rows["DateLabel"].unique() if label]
+        target = records[target_team]
+        entered = sum(
+            _normalize_game_result(results.get(str(row.GameKey), "未入力")) != "未入力"
+            for row in dated_schedule.itertuples(index=False)
+            if pd.Timestamp(row.Date) <= pd.Timestamp(game_date)
+        )
+        rows.append(
+            {
+                "Date": pd.Timestamp(game_date),
+                "DateLabel": labels[0] if labels else "",
+                "EnteredGames": entered,
+                "TargetWins": target["Wins"],
+                "TargetLosses": target["Losses"],
+                "TargetTies": target["Ties"],
+                "TargetRate": _win_rate(target["Wins"], target["Losses"]),
+                "RemainingGames": len(remaining),
+                "IsLit": is_lit,
+                "IsClinched": is_clinched,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _team_remaining(schedule: pd.DataFrame, team: str) -> int:
+    if schedule.empty:
+        return 0
+    return int(((schedule["HomeTeam"] == team) | (schedule["AwayTeam"] == team)).sum())
 
 
 def _direct_remaining(schedule: pd.DataFrame, target_team: str, rival: str) -> int:

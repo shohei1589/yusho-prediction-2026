@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import hashlib
 import os
 import re
 
@@ -16,7 +17,13 @@ from yusho.npb_client import (
     fetch_standings,
     schedule_to_daily_opponents,
 )
-from yusho.magic import MagicAnalysis, analyze_magic
+from yusho.magic import (
+    GAME_RESULT_OPTIONS,
+    MagicAnalysis,
+    MagicScenarioAnalysis,
+    analyze_magic,
+    analyze_magic_scenario,
+)
 from yusho.simulation import SimulationResult, run_simulations
 from yusho.teams import CENTRAL, PACIFIC, league_teams, team_label
 
@@ -289,7 +296,7 @@ def _render_summary(
 
     with tab_magic:
         magic = analyze_magic(standings, schedule, league, target_team)
-        _render_magic_analysis(magic, target_team)
+        _render_magic_analysis(magic, target_team, standings, schedule, league)
 
     with tab_standings:
         left, right = st.columns([3, 2])
@@ -557,7 +564,13 @@ def _render_table(frame: pd.DataFrame) -> None:
     st.markdown(f"<div class='table-card'>{html}</div>", unsafe_allow_html=True)
 
 
-def _render_magic_analysis(magic: MagicAnalysis, target_team: str) -> None:
+def _render_magic_analysis(
+    magic: MagicAnalysis,
+    target_team: str,
+    standings: pd.DataFrame,
+    schedule: pd.DataFrame,
+    league: str,
+) -> None:
     target_name = team_label(target_team)
     required = (
         "不可"
@@ -578,6 +591,127 @@ def _render_magic_analysis(magic: MagicAnalysis, target_team: str) -> None:
     _render_table(_format_magic_clinch_table(magic.clinch_table))
     st.subheader("マジック点灯チェック")
     _render_table(_format_magic_lighting_table(magic.lighting_table))
+
+    st.divider()
+    st.subheader("全試合シナリオ確認")
+    st.caption(
+        "Excelのように残り試合の結果を入力できます。未入力の試合は、条件判定では残り試合として扱います。"
+    )
+    game_frame = _magic_game_input_frame(schedule)
+    if game_frame.empty:
+        st.info("入力できる残り試合はありません。")
+        return
+
+    schedule_token = _magic_schedule_token(game_frame)
+    reset_counter_key = f"magic_game_reset_{league}_{target_team}_{schedule_token}"
+    if reset_counter_key not in st.session_state:
+        st.session_state[reset_counter_key] = 0
+    reset_col, note_col = st.columns([1.2, 3.8])
+    with reset_col:
+        if st.button(
+            "結果入力をリセット",
+            key=f"magic_game_reset_button_{league}_{target_team}_{schedule_token}",
+            use_container_width=True,
+        ):
+            st.session_state[reset_counter_key] += 1
+            st.rerun()
+    with note_col:
+        st.markdown(
+            "<div class='scenario-note'>ホーム勝・ビジター勝・引分から選択してください。</div>",
+            unsafe_allow_html=True,
+        )
+
+    editor_key = (
+        f"magic_game_editor_{league}_{target_team}_{schedule_token}_"
+        f"{st.session_state[reset_counter_key]}"
+    )
+    edited = st.data_editor(
+        game_frame[["日付", "カード", "球場", "結果"]],
+        key=editor_key,
+        hide_index=True,
+        num_rows="fixed",
+        use_container_width=True,
+        disabled=["日付", "カード", "球場"],
+        column_config={
+            "結果": st.column_config.SelectboxColumn(
+                "結果",
+                options=list(GAME_RESULT_OPTIONS),
+                required=True,
+            )
+        },
+    )
+    results = {
+        str(index): str(value)
+        for index, value in edited["結果"].items()
+    }
+    scenario = analyze_magic_scenario(
+        standings,
+        schedule.assign(GameKey=game_frame.index),
+        league,
+        target_team,
+        results,
+    )
+    _render_magic_scenario_result(scenario, target_team)
+
+
+def _magic_game_input_frame(schedule: pd.DataFrame) -> pd.DataFrame:
+    if schedule.empty or "Date" not in schedule.columns:
+        return pd.DataFrame(columns=["日付", "カード", "球場", "結果"])
+    frame = schedule.copy().reset_index(drop=True)
+    frame["GameKey"] = [str(index) for index in frame.index]
+    frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+    frame = frame.dropna(subset=["Date"])
+    if frame.empty:
+        return pd.DataFrame(columns=["日付", "カード", "球場", "結果"])
+    labels = frame.get("DateLabel", pd.Series("", index=frame.index))
+    labels = labels.fillna("").astype(str).str.strip()
+    frame["日付"] = [
+        label if label else timestamp.strftime("%Y-%m-%d")
+        for timestamp, label in zip(frame["Date"], labels)
+    ]
+    frame["カード"] = frame.apply(
+        lambda row: f"{_schedule_team_label(row.HomeTeam)} - {_schedule_team_label(row.AwayTeam)}",
+        axis=1,
+    )
+    venue = frame["Venue"] if "Venue" in frame.columns else pd.Series("未定", index=frame.index)
+    frame["球場"] = venue.fillna("未定").astype(str)
+    frame["結果"] = "未入力"
+    frame.index = frame["GameKey"]
+    return frame[["日付", "カード", "球場", "結果"]]
+
+
+def _magic_schedule_token(frame: pd.DataFrame) -> str:
+    values = "|".join(
+        f"{index}:{row['日付']}:{row['カード']}"
+        for index, row in frame.iterrows()
+    )
+    return hashlib.sha1(values.encode("utf-8")).hexdigest()[:10]
+
+
+def _render_magic_scenario_result(
+    scenario: MagicScenarioAnalysis,
+    target_team: str,
+) -> None:
+    entered = scenario.entered_games
+    total = scenario.total_games
+    remaining = max(0, total - entered)
+    metric_cols = st.columns([1, 1, 1, 1])
+    metric_cols[0].metric("入力済み試合", f"{entered} / {total}")
+    metric_cols[1].metric("未入力試合", f"{remaining}")
+    metric_cols[2].metric("マジック判定", "点灯" if scenario.is_lit else "未点灯")
+    metric_cols[3].metric("優勝判定", "優勝" if scenario.is_clinched else "未確定")
+
+    if remaining:
+        st.caption("未入力の試合があるため、現在の入力結果と残り試合の条件を組み合わせて判定しています。")
+
+    st.subheader("入力結果反映後の勝敗表")
+    _render_table(_format_magic_scenario_standings(scenario.current_standings))
+    st.subheader("入力時点のマジック点灯条件")
+    _render_table(_format_magic_scenario_lighting_table(scenario.condition_table))
+    st.subheader("入力時点の優勝条件")
+    _render_table(_format_magic_scenario_clinch_table(scenario.condition_table))
+    st.subheader("日付ごとの判定")
+    _render_table(_format_magic_timeline(scenario.timeline))
 
 
 def _champion_date_chart(
@@ -834,6 +968,69 @@ def _format_magic_lighting_table(frame: pd.DataFrame) -> pd.DataFrame:
     formatted["自軍想定勝率"] = formatted["TargetScenarioRate"].map(_rate_display)
     formatted["相手最高勝率"] = formatted["RivalMaxRate"].map(_rate_display)
     formatted["判定"] = formatted["IsLit"].map(lambda value: "点灯" if bool(value) else "未点灯")
+    return formatted[columns]
+
+
+def _format_magic_scenario_lighting_table(frame: pd.DataFrame) -> pd.DataFrame:
+    columns = ["相手", "直接残", "点灯時の自軍勝率", "相手最高勝率", "判定"]
+    if frame.empty:
+        return pd.DataFrame(columns=columns)
+    formatted = frame.copy()
+    formatted["相手"] = formatted["Team"].map(team_label)
+    formatted["直接残"] = formatted["DirectRemaining"].astype(int)
+    formatted["点灯時の自軍勝率"] = formatted["TargetScenarioRate"].map(_rate_display)
+    formatted["相手最高勝率"] = formatted["RivalMaxRate"].map(_rate_display)
+    formatted["判定"] = formatted["IsLit"].map(lambda value: "点灯条件クリア" if bool(value) else "未達")
+    return formatted[columns]
+
+
+def _format_magic_scenario_standings(frame: pd.DataFrame) -> pd.DataFrame:
+    columns = ["球団", "勝", "敗", "分", "勝率"]
+    if frame.empty:
+        return pd.DataFrame(columns=columns)
+    formatted = frame.copy()
+    formatted["球団"] = formatted["Team"].map(team_label)
+    formatted["勝率"] = formatted.apply(
+        lambda row: _rate_display(_win_rate(row["Wins"], row["Losses"])),
+        axis=1,
+    )
+    formatted = formatted.sort_values(
+        ["Wins", "Losses"],
+        ascending=[False, True],
+    )
+    return formatted[["球団", "Wins", "Losses", "Ties", "勝率"]].rename(
+        columns={"Wins": "勝", "Losses": "敗", "Ties": "分"}
+    )
+
+
+def _format_magic_scenario_clinch_table(frame: pd.DataFrame) -> pd.DataFrame:
+    columns = ["相手", "対象最低勝率", "相手最高勝率", "必要勝利", "判定"]
+    if frame.empty:
+        return pd.DataFrame(columns=columns)
+    formatted = frame.copy()
+    formatted["相手"] = formatted["Team"].map(team_label)
+    formatted["対象最低勝率"] = formatted["TargetMinRate"].map(_rate_display)
+    formatted["相手最高勝率"] = formatted["RivalMaxRateForClinch"].map(_rate_display)
+    formatted["必要勝利"] = formatted["NeededWins"].map(_needed_wins_display)
+    formatted["判定"] = formatted["IsClinched"].map(lambda value: "優勝条件クリア" if bool(value) else "未達")
+    return formatted[columns]
+
+
+def _format_magic_timeline(frame: pd.DataFrame) -> pd.DataFrame:
+    columns = ["日付", "入力済み", "対象球団の勝敗", "現在勝率", "残り試合", "マジック", "優勝"]
+    if frame.empty:
+        return pd.DataFrame(columns=columns)
+    formatted = frame.copy()
+    formatted["日付"] = formatted.apply(_result_date_label, axis=1)
+    formatted["入力済み"] = formatted["EnteredGames"].astype(int)
+    formatted["対象球団の勝敗"] = formatted.apply(
+        lambda row: f"{int(row['TargetWins'])}-{int(row['TargetLosses'])}-{int(row['TargetTies'])}",
+        axis=1,
+    )
+    formatted["現在勝率"] = formatted["TargetRate"].map(_rate_display)
+    formatted["残り試合"] = formatted["RemainingGames"].astype(int)
+    formatted["マジック"] = formatted["IsLit"].map(lambda value: "点灯" if bool(value) else "未点灯")
+    formatted["優勝"] = formatted["IsClinched"].map(lambda value: "優勝" if bool(value) else "未確定")
     return formatted[columns]
 
 
