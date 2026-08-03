@@ -1558,7 +1558,7 @@ def _close_champion_date_chart_dialog() -> None:
 
 
 @st.dialog(
-    "優勝日分布を大画面で表示",
+    " ",
     width="large",
     on_dismiss=_close_champion_date_chart_dialog,
 )
