@@ -45,6 +45,8 @@ FARM_LEAGUE_BY_LABEL = {
     label: code for code, label in FARM_LEAGUE_LABELS.items()
 }
 MAGIC_INPUT_DEBOUNCE_SECONDS = 2.0
+CHART_DIALOG_STATE_KEY = "champion_date_chart_dialog_open"
+CHART_DIALOG_SELECTION_KEY = "champion_date_chart_last_selection"
 TEAM_ACCENT_COLORS = {
     "G": "#f97316",
     "T": "#facc15",
@@ -369,11 +371,40 @@ def _render_summary(
     with tab_result:
         left, right = st.columns([2, 1])
         with left:
-            st.plotly_chart(
-                _champion_date_chart(result, target_team, team_name, dark_mode),
-                use_container_width=True,
-                config={"displayModeBar": False, "scrollZoom": False, "responsive": True},
+            champion_chart = _champion_date_chart(
+                result,
+                target_team,
+                team_name,
+                dark_mode,
             )
+            chart_event = st.plotly_chart(
+                champion_chart,
+                use_container_width=True,
+                key=f"champion_date_chart_{year}_{league}_{target_team}",
+                on_select="rerun",
+                selection_mode="points",
+                config={
+                    "displayModeBar": False,
+                    "scrollZoom": False,
+                    "responsive": True,
+                },
+            )
+            selection_signature = _plotly_chart_selection_signature(chart_event)
+            if selection_signature and selection_signature != st.session_state.get(
+                CHART_DIALOG_SELECTION_KEY
+            ):
+                st.session_state[CHART_DIALOG_SELECTION_KEY] = selection_signature
+                st.session_state[CHART_DIALOG_STATE_KEY] = True
+            if st.button(
+                "グラフを大画面で表示",
+                key=f"champion_date_chart_expand_{year}_{league}_{target_team}",
+            ):
+                st.session_state[CHART_DIALOG_STATE_KEY] = True
+            if st.session_state.get(CHART_DIALOG_STATE_KEY, False):
+                _show_champion_date_chart_dialog(
+                    champion_chart,
+                    f"champion_date_chart_dialog_{year}_{league}_{target_team}",
+                )
         with right:
             st.subheader("優勝確定日 上位")
             _render_table(_top_dates(result.champion_dates))
@@ -1464,6 +1495,7 @@ def _champion_date_chart(
         title=f"{team_name} 優勝確定日分布",
         height=440,
         margin={"l": 10, "r": 10, "t": 60, "b": 10},
+        clickmode="event+select",
         showlegend=False,
         bargap=0.22,
         plot_bgcolor="#182338" if dark_mode else "#ffffff",
@@ -1507,6 +1539,45 @@ def _champion_date_chart(
             },
         )
     return fig
+
+
+def _plotly_chart_selection_signature(event: object) -> tuple[str, ...]:
+    if event is None:
+        return ()
+    selection = getattr(event, "selection", None)
+    if selection is None:
+        return ()
+    points = getattr(selection, "points", None)
+    if not points:
+        return ()
+    return tuple(sorted(str(point) for point in points))
+
+
+def _close_champion_date_chart_dialog() -> None:
+    st.session_state[CHART_DIALOG_STATE_KEY] = False
+
+
+@st.dialog(
+    "優勝日分布を大画面で表示",
+    width="large",
+    on_dismiss=_close_champion_date_chart_dialog,
+)
+def _show_champion_date_chart_dialog(figure: object, chart_key: str) -> None:
+    if hasattr(figure, "update_layout"):
+        figure.update_layout(height=720)
+    st.plotly_chart(
+        figure,
+        use_container_width=True,
+        key=chart_key,
+        config={
+            "displayModeBar": False,
+            "scrollZoom": False,
+            "responsive": True,
+        },
+    )
+    if st.button("閉じる", key=f"{chart_key}_close"):
+        st.session_state[CHART_DIALOG_STATE_KEY] = False
+        st.rerun()
 
 
 def _collapse_champion_date_rows(frame: pd.DataFrame) -> pd.DataFrame:
