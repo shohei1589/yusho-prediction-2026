@@ -66,14 +66,8 @@ def run_simulations(
             no_champion_count += 1
         else:
             champion_dates.append(champion_date)
-        ranked_teams = _rank_final_standings(final_standings, teams)
-        champion_values = final_standings[ranked_teams[0]]
-        champion_run_diff = champion_values["Wins"] - champion_values["Losses"]
         for team, values in final_standings.items():
-            games_behind = (
-                champion_run_diff - (values["Wins"] - values["Losses"])
-            ) / 2
-            final_rows.append({"Team": team, **values, "GamesBehind": games_behind})
+            final_rows.append({"Team": team, **values})
 
     probability = len(champion_dates) / simulation_count
     date_counts = _champion_date_counts(champion_dates, probability)
@@ -81,7 +75,7 @@ def run_simulations(
     if not final_frame.empty:
         final_frame = (
             final_frame.groupby("Team", as_index=False)[
-                ["Wins", "Losses", "Ties", "GamesBehind"]
+                ["Wins", "Losses", "Ties"]
             ]
             .mean()
         )
@@ -95,6 +89,10 @@ def run_simulations(
             )
             .drop(columns=["_WinRate"])
         )
+        leader_run_diff = final_frame.iloc[0]["Wins"] - final_frame.iloc[0]["Losses"]
+        final_frame["GamesBehind"] = (
+            leader_run_diff - (final_frame["Wins"] - final_frame["Losses"])
+        ) / 2
 
     return SimulationResult(
         target_team=target_team,
@@ -183,24 +181,6 @@ def simulate_season(
 def _current_win_rate(wins: int, losses: int) -> float:
     games = wins + losses
     return wins / games if games else 0.5
-
-
-def _rank_final_standings(
-    final_standings: dict[str, dict[str, int]],
-    teams: tuple[str, ...],
-) -> list[str]:
-    return sorted(
-        teams,
-        key=lambda team: (
-            _current_win_rate(
-                final_standings[team]["Wins"],
-                final_standings[team]["Losses"],
-            ),
-            final_standings[team]["Wins"],
-            -final_standings[team]["Losses"],
-        ),
-        reverse=True,
-    )
 
 
 def _fixed_win_rates(

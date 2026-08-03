@@ -1738,6 +1738,7 @@ def _format_final_standings_table(final_standings: pd.DataFrame) -> pd.DataFrame
     for column in ["Wins", "Losses", "Ties"]:
         frame[column] = frame[column].map(lambda value: f"{value:.1f}")
     frame["GamesBehind"] = frame["GamesBehind"].map(_games_behind_display)
+    frame.loc[frame.index[0], "GamesBehind"] = "-"
     return frame[["TeamLabel", "Wins", "Losses", "Ties", "GamesBehind"]].rename(
         columns={
             "TeamLabel": "球団",
