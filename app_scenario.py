@@ -1040,8 +1040,8 @@ def _render_magic_analysis_with_apply(
         with control_cols[1]:
             st.markdown(
                 "<div class='magic-matrix-help'>"
-                "入力中は両チームの欄を編集できます。"
-                "相手チームの結果と判定への反映は「入力内容を反映」を押してください。"
+                "1試合につき入力できる欄は1つです。灰色の欄は反映後に相手チームの結果が表示されます。"
+                "入力した結果を判定へ反映するには「入力内容を反映」を押してください。"
                 "</div>",
                 unsafe_allow_html=True,
             )
@@ -1190,6 +1190,17 @@ def _render_magic_game_matrix_draft(
                     team,
                     game.HomeTeam,
                 )
+                editable_team = _magic_editable_team(
+                    str(game.HomeTeam),
+                    str(game.AwayTeam),
+                    teams,
+                )
+                if team != editable_team:
+                    result_column.markdown(
+                        f"<div class='magic-matrix-result-disabled'>{default_symbol}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    continue
                 if widget_key not in st.session_state:
                     st.session_state[widget_key] = default_symbol
                 widget_map.setdefault(game_key, []).append(
@@ -1203,6 +1214,19 @@ def _render_magic_game_matrix_draft(
                         label_visibility="collapsed",
                     )
     st.session_state[widget_map_key] = widget_map
+
+
+def _magic_editable_team(
+    home: str,
+    away: str,
+    teams: tuple[str, ...],
+) -> str:
+    """Choose one stable input side for each game in the matrix."""
+    present = {home, away}
+    for team in teams:
+        if team in present:
+            return team
+    return home
 
 
 def _sync_magic_draft_from_widgets(draft_state_key: str) -> None:
@@ -2053,6 +2077,21 @@ div[data-testid="stVerticalBlock"]:has(.magic-summary-marker) button {{
   font-size: 0.92rem;
   font-weight: 900;
   text-align: center;
+}}
+.magic-matrix-result-disabled {{
+  min-height: 46px;
+  height: 46px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid {matrix_border};
+  background: {surface_soft};
+  color: {muted};
+  font-size: 0.92rem;
+  font-weight: 900;
+  text-align: center;
+  opacity: 0.72;
 }}
 div[data-testid="stSelectbox"] {{
   margin-bottom: 0.25rem;
