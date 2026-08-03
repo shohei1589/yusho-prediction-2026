@@ -586,7 +586,15 @@ def _parse_farm_schedule_month(html: str, year: int) -> pd.DataFrame:
         if not isinstance(cells, list) or len(cells) < 2:
             continue
 
-        date_match = re.search(r"(\d{1,2})/(\d{1,2})", str(cells[0]["text"]))
+        cell_texts = [_clean_text(str(cell.get("text", ""))) for cell in cells]
+        date_match = next(
+            (
+                re.search(r"(\d{1,2})/(\d{1,2})", text)
+                for text in cell_texts
+                if re.search(r"(\d{1,2})/(\d{1,2})", text)
+            ),
+            None,
+        )
         if date_match:
             current_date = pd.Timestamp(
                 date(year, int(date_match.group(1)), int(date_match.group(2)))
@@ -594,10 +602,18 @@ def _parse_farm_schedule_month(html: str, year: int) -> pd.DataFrame:
         if current_date is None:
             continue
 
-        card_text = _clean_text(str(cells[1]["text"]))
-        team_codes = _farm_team_codes(card_text)
-        if len(team_codes) < 2:
+        card_index = next(
+            (
+                index
+                for index, text in enumerate(cell_texts)
+                if len(_farm_team_codes(text)) >= 2
+            ),
+            None,
+        )
+        if card_index is None:
             continue
+        card_text = cell_texts[card_index]
+        team_codes = _farm_team_codes(card_text)
 
         score_match = re.search(r"(?<!\d)(\d+)\s*[-－]\s*(\d+)(?!\d)", card_text)
         is_canceled = "中止" in card_text
@@ -605,7 +621,11 @@ def _parse_farm_schedule_month(html: str, year: int) -> pd.DataFrame:
         score2 = int(score_match.group(2)) if score_match else pd.NA
         status = "canceled" if is_canceled else "final" if score_match else "scheduled"
 
-        venue_text = _clean_text(str(cells[2]["text"])) if len(cells) >= 3 else ""
+        venue_text = (
+            cell_texts[card_index + 1]
+            if card_index + 1 < len(cell_texts)
+            else ""
+        )
         time_match = re.search(r"\b(\d{1,2}:\d{2})\b", venue_text)
         start_time = time_match.group(1) if time_match else ""
         games.append(
