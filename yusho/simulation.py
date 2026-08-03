@@ -121,6 +121,7 @@ def simulate_season(
         }
         for team, values in initial_standings.items()
     }
+    champion_date: dict[str, object] | None = None
 
     for row in daily_opponents.itertuples(index=False):
         game_date = row.Date
@@ -169,13 +170,15 @@ def simulate_season(
             elif result == "Lose":
                 standings[team]["Losses"] += 1
 
-        if _is_championship_decided(standings, total_games, teams, target_team):
-            return {
+        if champion_date is None and _is_championship_decided(
+            standings, total_games, teams, target_team
+        ):
+            champion_date = {
                 "Date": pd.Timestamp(game_date),
                 "DateLabel": str(game_date_label).strip(),
-            }, standings
+            }
 
-    return None, standings
+    return champion_date, standings
 
 
 def _current_win_rate(wins: int, losses: int) -> float:
