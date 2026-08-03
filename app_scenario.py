@@ -16,6 +16,7 @@ from yusho.npb_client import (
     fetch_schedule,
     fetch_standings,
     schedule_to_daily_opponents,
+    standings_as_of,
 )
 from yusho.magic import MagicScenarioAnalysis, analyze_magic_scenario
 from yusho.simulation import SimulationResult, run_simulations
@@ -182,15 +183,20 @@ def main() -> None:
         st.exception(exc)
         return
 
-    editor_key = f"scenario_editor_{int(year)}_{league}"
-    scenario_input = _scenario_input_frame(standings_result.frame, league)
+    base_standings = standings_as_of(
+        standings_result.frame,
+        full_schedule_result.frame,
+        start_date,
+    )
+    editor_key = f"scenario_editor_{int(year)}_{league}_{start_date.isoformat()}"
+    scenario_input = _scenario_input_frame(base_standings, league)
     _initialize_scenario_state(editor_key, scenario_input)
 
     editor_col, _ = st.columns([0.88, 0.12])
     with editor_col:
         with st.expander("勝敗を編集", expanded=True):
             st.markdown(
-                "<div class='scenario-caption'>初期値はNPB公式値です。基準日を変える場合は、試合前時点の勝・敗・分に調整してください。</div>",
+                "<div class='scenario-caption'>初期値はNPB公式値です。過去日を基準日にすると、その日の試合開始前時点の勝・敗・分を公式結果から再構成します。</div>",
                 unsafe_allow_html=True,
             )
             reset_col, note_col = st.columns([0.9, 4.8])
@@ -449,7 +455,7 @@ def _render_summary(
         st.markdown(
             """
 - 基準日は「その日の試合開始前」として扱います。
-- 勝敗表の初期値はNPB.jpから取得した現在値です。過去日や任意シナリオでは、勝・敗・分を手で調整してください。
+- 勝敗表の初期値はNPB.jpから取得した現在値です。基準日が過去の場合は、その日の試合開始前時点の勝・敗・分を公式結果から再構成します。
 - 今後の想定勝率は、残り試合の勝敗確率を決めるために使います。
 - 残り試合はモンテカルロ法で多数回シミュレーションし、優勝確率と優勝確定日分布を推定します。
 - 各試合の勝敗確率は、両チームの今後想定勝率からLog5風のオッズ比で計算します。

@@ -206,6 +206,60 @@ def fetch_standings(year: int, league: str) -> FetchResult:
     return FetchResult(pd.DataFrame(data), (url,))
 
 
+def standings_as_of(
+    current_standings: pd.DataFrame,
+    full_schedule: pd.DataFrame,
+    as_of: date,
+) -> pd.DataFrame:
+    """Reconstruct standings before games on ``as_of`` using official results."""
+    frame = current_standings.copy()
+    if frame.empty or full_schedule.empty:
+        return frame
+
+    schedule = full_schedule.copy()
+    schedule["Date"] = pd.to_datetime(schedule["Date"], errors="coerce")
+    schedule = schedule[
+        (schedule["Date"] >= pd.Timestamp(as_of))
+        & schedule["Status"].eq("final")
+    ]
+    if schedule.empty:
+        return frame
+
+    team_index = {str(team): index for index, team in enumerate(frame["Team"])}
+    for game in schedule.itertuples(index=False):
+        home = str(game.HomeTeam)
+        away = str(game.AwayTeam)
+        score_home = pd.to_numeric(getattr(game, "Score1", pd.NA), errors="coerce")
+        score_away = pd.to_numeric(getattr(game, "Score2", pd.NA), errors="coerce")
+        if home not in team_index or away not in team_index:
+            continue
+        if pd.isna(score_home) or pd.isna(score_away):
+            continue
+
+        home_index = team_index[home]
+        away_index = team_index[away]
+        frame.at[home_index, "Games"] -= 1
+        frame.at[away_index, "Games"] -= 1
+        if score_home > score_away:
+            frame.at[home_index, "Wins"] -= 1
+            frame.at[away_index, "Losses"] -= 1
+        elif score_home < score_away:
+            frame.at[home_index, "Losses"] -= 1
+            frame.at[away_index, "Wins"] -= 1
+        else:
+            frame.at[home_index, "Ties"] -= 1
+            frame.at[away_index, "Ties"] -= 1
+
+    frame["Games"] = frame[["Wins", "Losses", "Ties"]].sum(axis=1).astype(int)
+    frame["WinRate"] = frame.apply(
+        lambda row: row["Wins"] / (row["Wins"] + row["Losses"])
+        if row["Wins"] + row["Losses"]
+        else 0.0,
+        axis=1,
+    )
+    return frame
+
+
 def fetch_schedule(
     year: int,
     start_date: date | None = None,
