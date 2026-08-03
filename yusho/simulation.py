@@ -84,7 +84,16 @@ def run_simulations(
                 ["Wins", "Losses", "Ties", "GamesBehind"]
             ]
             .mean()
-            .sort_values(["Wins", "Losses"], ascending=[False, True])
+        )
+        final_frame["_WinRate"] = final_frame["Wins"] / (
+            final_frame["Wins"] + final_frame["Losses"]
+        ).replace(0, 1)
+        final_frame = (
+            final_frame.sort_values(
+                ["_WinRate", "Wins", "Losses"],
+                ascending=[False, False, True],
+            )
+            .drop(columns=["_WinRate"])
         )
 
     return SimulationResult(
