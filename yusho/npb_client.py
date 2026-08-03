@@ -531,18 +531,49 @@ def schedule_to_daily_opponents(
         }
         for team in teams:
             row[f"{team}_Opponent"] = pd.NA
+            row[f"{team}_Result"] = pd.NA
         for game in group.itertuples(index=False):
             home = str(game.HomeTeam)
             away = str(game.AwayTeam)
+            known_result = _known_game_result(game)
             if home in teams and away in teams:
                 row[f"{home}_Opponent"] = away
                 row[f"{away}_Opponent"] = home
+                if known_result is not None:
+                    row[f"{home}_Result"] = known_result
+                    row[f"{away}_Result"] = _opposite_game_result(known_result)
             elif home in teams:
                 row[f"{home}_Opponent"] = away
+                if known_result is not None:
+                    row[f"{home}_Result"] = known_result
             elif away in teams:
                 row[f"{away}_Opponent"] = home
+                if known_result is not None:
+                    row[f"{away}_Result"] = _opposite_game_result(known_result)
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+def _known_game_result(game: object) -> str | None:
+    if str(getattr(game, "Status", "")) != "final":
+        return None
+    score_home = pd.to_numeric(getattr(game, "Score1", pd.NA), errors="coerce")
+    score_away = pd.to_numeric(getattr(game, "Score2", pd.NA), errors="coerce")
+    if pd.isna(score_home) or pd.isna(score_away):
+        return None
+    if score_home > score_away:
+        return "Win"
+    if score_home < score_away:
+        return "Lose"
+    return "Tie"
+
+
+def _opposite_game_result(result: str) -> str:
+    if result == "Win":
+        return "Lose"
+    if result == "Lose":
+        return "Win"
+    return "Tie"
 
 
 def _target_makeup_counts(schedule: pd.DataFrame, target_team: str | None) -> dict[str, int]:

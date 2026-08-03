@@ -137,32 +137,45 @@ def simulate_season(
             if pd.isna(opponent):
                 continue
             opponent = str(opponent)
+            fixed_result = _fixed_result(row, team)
             if opponent not in teams:
                 if daily_results[team] is None:
-                    opponent_rate = (external_win_rates or {}).get(opponent)
-                    if opponent_rate is not None:
-                        team_win_prob = odds_ratio(
-                            fixed_win_rates[team],
-                            min(0.999, max(0.001, float(opponent_rate))),
-                        )
+                    if fixed_result is not None:
+                        daily_results[team] = fixed_result
                     else:
-                        team_win_prob = fixed_win_rates[team]
-                    daily_results[team] = (
-                        "Win" if rng.random() < team_win_prob else "Lose"
-                    )
+                        opponent_rate = (external_win_rates or {}).get(opponent)
+                        if opponent_rate is not None:
+                            team_win_prob = odds_ratio(
+                                fixed_win_rates[team],
+                                min(0.999, max(0.001, float(opponent_rate))),
+                            )
+                        else:
+                            team_win_prob = fixed_win_rates[team]
+                        daily_results[team] = (
+                            "Win" if rng.random() < team_win_prob else "Lose"
+                        )
                 continue
             pair = frozenset((team, opponent))
             if pair in processed_pairs:
                 continue
             processed_pairs.add(pair)
 
-            team_win_prob = odds_ratio(fixed_win_rates[team], fixed_win_rates[opponent])
-            if rng.random() < team_win_prob:
-                daily_results[team] = "Win"
-                daily_results[opponent] = "Lose"
+            opponent_fixed_result = _fixed_result(row, opponent)
+            if fixed_result is not None or opponent_fixed_result is not None:
+                if fixed_result is not None:
+                    daily_results[team] = fixed_result
+                    daily_results[opponent] = _opposite_result(fixed_result)
+                else:
+                    daily_results[opponent] = opponent_fixed_result
+                    daily_results[team] = _opposite_result(opponent_fixed_result)
             else:
-                daily_results[team] = "Lose"
-                daily_results[opponent] = "Win"
+                team_win_prob = odds_ratio(fixed_win_rates[team], fixed_win_rates[opponent])
+                if rng.random() < team_win_prob:
+                    daily_results[team] = "Win"
+                    daily_results[opponent] = "Lose"
+                else:
+                    daily_results[team] = "Lose"
+                    daily_results[opponent] = "Win"
 
         for team, result in daily_results.items():
             if result == "Win":
@@ -184,6 +197,22 @@ def simulate_season(
 def _current_win_rate(wins: int, losses: int) -> float:
     games = wins + losses
     return wins / games if games else 0.5
+
+
+def _fixed_result(row: object, team: str) -> str | None:
+    result = getattr(row, f"{team}_Result", pd.NA)
+    if pd.isna(result):
+        return None
+    result = str(result)
+    return result if result in {"Win", "Lose", "Tie"} else None
+
+
+def _opposite_result(result: str | None) -> str:
+    if result == "Win":
+        return "Lose"
+    if result == "Lose":
+        return "Win"
+    return "Tie"
 
 
 def _fixed_win_rates(

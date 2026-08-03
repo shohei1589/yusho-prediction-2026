@@ -214,8 +214,12 @@ def main() -> None:
 
     try:
         scenario_standings, assumed_win_rates = _scenario_to_model_inputs(editor_key, scenario_input)
+        base_date_schedule = _schedule_from_base_date(
+            full_schedule_result.frame,
+            start_date,
+        )
         completed_schedule = append_makeup_placeholders(
-            schedule_result.frame,
+            base_date_schedule,
             scenario_standings,
             league,
             full_schedule=full_schedule_result.frame,
@@ -323,6 +327,24 @@ def _cached_full_schedule(
     os.environ["NPB_VERIFY_SSL"] = "true" if verify_ssl else "false"
     os.environ["NPB_USE_ENV_PROXY"] = "true" if use_env_proxy else "false"
     return fetch_schedule(year, league=league)
+
+
+def _schedule_from_base_date(
+    full_schedule: pd.DataFrame,
+    start_date: date,
+) -> pd.DataFrame:
+    if full_schedule.empty or "Date" not in full_schedule.columns:
+        return full_schedule.copy()
+    frame = full_schedule.copy()
+    frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+    frame = frame.dropna(subset=["Date"])
+    if "Status" not in frame.columns:
+        return frame.iloc[0:0].copy()
+    frame = frame[
+        (frame["Date"] >= pd.Timestamp(start_date))
+        & frame["Status"].isin(["final", "scheduled", "in_progress"])
+    ]
+    return frame.sort_values(["Date", "HomeTeam", "AwayTeam"]).reset_index(drop=True)
 
 
 @st.cache_data(ttl=60 * 30, show_spinner=False)
@@ -687,6 +709,8 @@ def _scenario_signature(
             str(row.HomeTeam),
             str(row.AwayTeam),
             str(getattr(row, "Status", "")),
+            str(getattr(row, "Score1", "")),
+            str(getattr(row, "Score2", "")),
             bool(getattr(row, "IsMakeup", False)),
             str(getattr(row, "DateLabel", "")),
         )
