@@ -19,7 +19,16 @@ from yusho.npb_client import (
 )
 from yusho.magic import MagicScenarioAnalysis, analyze_magic_scenario
 from yusho.simulation import SimulationResult, run_simulations
-from yusho.teams import CENTRAL, PACIFIC, league_teams, team_label
+from yusho.teams import (
+    CENTRAL,
+    FARM_CENTRAL,
+    FARM_EAST,
+    FARM_WEST,
+    PACIFIC,
+    is_farm_league,
+    league_teams,
+    team_label,
+)
 
 
 LEAGUE_LABELS = {
@@ -27,6 +36,14 @@ LEAGUE_LABELS = {
     CENTRAL: "セ・リーグ",
 }
 LEAGUE_BY_LABEL = {label: code for code, label in LEAGUE_LABELS.items()}
+FARM_LEAGUE_LABELS = {
+    FARM_WEST: "西地区",
+    FARM_CENTRAL: "中地区",
+    FARM_EAST: "東地区",
+}
+FARM_LEAGUE_BY_LABEL = {
+    label: code for code, label in FARM_LEAGUE_LABELS.items()
+}
 MAGIC_INPUT_DEBOUNCE_SECONDS = 2.0
 TEAM_ACCENT_COLORS = {
     "G": "#f97316",
@@ -41,6 +58,8 @@ TEAM_ACCENT_COLORS = {
     "Bs": "#8b5cf6",
     "E": "#991b1b",
     "L": "#1d4ed8",
+    "OIX": "#64748b",
+    "HYT": "#0f766e",
 }
 TEAM_MATRIX_HEADER_COLORS = {
     "G": "#e87722",
@@ -55,19 +74,37 @@ TEAM_MATRIX_HEADER_COLORS = {
     "Bs": "#174a7c",
     "E": "#d62828",
     "L": "#2d6aa3",
+    "OIX": "#6b7280",
+    "HYT": "#0f766e",
 }
 st.set_page_config(page_title="2026 優勝予測", layout="wide")
+
+
+def _farm_mode_from_query() -> bool:
+    value = str(st.query_params.get("farm", "")).strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 def main() -> None:
     dark_mode = st.session_state.get("dark_mode", False)
     _apply_style(dark_mode)
+    farm_mode = _farm_mode_from_query()
 
     with st.sidebar:
         st.header("条件")
         year = st.number_input("年度", min_value=2026, max_value=2030, value=2026, step=1)
-        league_label = st.radio("リーグ", list(LEAGUE_BY_LABEL.keys()), horizontal=True)
-        league = LEAGUE_BY_LABEL[league_label]
+        if farm_mode:
+            st.caption("ファームモード")
+            league_label = st.radio(
+                "ファーム地区",
+                list(FARM_LEAGUE_BY_LABEL.keys()),
+                index=0,
+                horizontal=True,
+            )
+            league = FARM_LEAGUE_BY_LABEL[league_label]
+        else:
+            league_label = st.radio("リーグ", list(LEAGUE_BY_LABEL.keys()), horizontal=True)
+            league = LEAGUE_BY_LABEL[league_label]
         target_team = st.selectbox(
             "対象球団",
             list(league_teams(league)),
@@ -104,7 +141,11 @@ def main() -> None:
 
     header_left, header_right = st.columns([5.5, 1])
     with header_left:
-        st.markdown("<h1 class='app-title'>2026 優勝予測</h1>", unsafe_allow_html=True)
+        title_suffix = "ファーム優勝予測" if farm_mode else "優勝予測"
+        st.markdown(
+            f"<h1 class='app-title'>{int(year)} {title_suffix}</h1>",
+            unsafe_allow_html=True,
+        )
         st.markdown(
             "<div class='app-caption'>データ出典: NPB.jp 日本野球機構。非公式・非商用の予測ツールです。</div>",
             unsafe_allow_html=True,
@@ -125,8 +166,14 @@ def main() -> None:
             )
             full_schedule_result = _cached_full_schedule(
                 int(year),
+                league,
                 verify_ssl,
                 use_env_proxy,
+            )
+            external_win_rates = (
+                _cached_farm_win_rates(int(year), verify_ssl, use_env_proxy)
+                if farm_mode
+                else {}
             )
     except Exception as exc:
         st.error("NPB公式データの取得に失敗しました。")
@@ -175,6 +222,7 @@ def main() -> None:
             simulation_count,
             seed_enabled,
             int(seed),
+            external_win_rates,
         )
         result_key = f"simulation_result_{int(year)}_{league}"
         run_clicked = st.button("シミュレーション実行", type="primary", use_container_width=True)
@@ -190,11 +238,13 @@ def main() -> None:
                     simulation_count=simulation_count,
                     seed=int(seed) if seed_enabled else None,
                     assumed_win_rates=assumed_win_rates,
+                    external_win_rates=external_win_rates,
                 )
             st.session_state[result_key] = {
                 "result": result,
                 "standings": scenario_standings,
                 "assumed_win_rates": assumed_win_rates,
+                "external_win_rates": external_win_rates,
                 "schedule": completed_schedule,
                 "daily_opponents": daily_opponents,
                 "signature": scenario_signature,
@@ -258,12 +308,33 @@ def _cached_schedule(
 @st.cache_data(ttl=60 * 30, show_spinner=False)
 def _cached_full_schedule(
     year: int,
+    league: str,
     verify_ssl: bool,
     use_env_proxy: bool,
 ) -> object:
     os.environ["NPB_VERIFY_SSL"] = "true" if verify_ssl else "false"
     os.environ["NPB_USE_ENV_PROXY"] = "true" if use_env_proxy else "false"
-    return fetch_schedule(year)
+    return fetch_schedule(year, league=league)
+
+
+@st.cache_data(ttl=60 * 30, show_spinner=False)
+def _cached_farm_win_rates(
+    year: int,
+    verify_ssl: bool,
+    use_env_proxy: bool,
+) -> dict[str, float]:
+    os.environ["NPB_VERIFY_SSL"] = "true" if verify_ssl else "false"
+    os.environ["NPB_USE_ENV_PROXY"] = "true" if use_env_proxy else "false"
+    rates: dict[str, float] = {}
+    for farm_league in (FARM_WEST, FARM_CENTRAL, FARM_EAST):
+        frame = fetch_standings(year, farm_league).frame
+        rates.update(
+            {
+                str(row.Team): float(row.WinRate)
+                for row in frame.itertuples(index=False)
+            }
+        )
+    return rates
 
 
 def _render_summary(
@@ -335,6 +406,12 @@ def _render_summary(
             st.markdown(makeup_summary, unsafe_allow_html=True)
 
     with tab_model:
+        if is_farm_league(league):
+            st.info(
+                "ファーム地区の判定では、選択した地区のチームだけを優勝争いの比較対象にします。"
+                "地区外との交流戦は各チームの勝敗・残り試合に含め、相手地区の公式勝率を使ってシミュレーションします。"
+                "振替試合は仮置きせず、NPB公式に掲載された日程だけを使用します。"
+            )
         st.markdown(
             """
 - 基準日は「その日の試合開始前」として扱います。
@@ -550,6 +627,7 @@ def _scenario_signature(
     simulation_count: int,
     seed_enabled: bool,
     seed: int,
+    external_win_rates: dict[str, float] | None = None,
 ) -> tuple[object, ...]:
     standing_values = tuple(
         (row.Team, int(row.Wins), int(row.Losses), int(row.Ties))
@@ -558,6 +636,10 @@ def _scenario_signature(
     rate_values = tuple(
         (team, round(float(rate), 4))
         for team, rate in sorted(assumed_win_rates.items())
+    )
+    external_rate_values = tuple(
+        (team, round(float(rate), 4))
+        for team, rate in sorted((external_win_rates or {}).items())
     )
     schedule_values = tuple(
         (
@@ -573,6 +655,7 @@ def _scenario_signature(
     return (
         standing_values,
         rate_values,
+        external_rate_values,
         schedule_values,
         target_team,
         start_date.isoformat(),

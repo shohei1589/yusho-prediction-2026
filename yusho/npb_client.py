@@ -15,7 +15,18 @@ import pandas as pd
 import requests
 import urllib3
 
-from .teams import CENTRAL, PACIFIC, TEAMS, NPB_NAME_TO_CODE, league_teams, team_label
+from .teams import (
+    CENTRAL,
+    FARM_CENTRAL,
+    FARM_EAST,
+    FARM_WEST,
+    PACIFIC,
+    TEAMS,
+    NPB_NAME_TO_CODE,
+    is_farm_league,
+    league_teams,
+    team_label,
+)
 
 
 BASE_URL = "https://npb.jp"
@@ -23,6 +34,13 @@ SCHEDULE_MONTHS = tuple(range(3, 12))
 REGULAR_SEASON_GAMES = 143
 INTRA_LEAGUE_PAIR_GAMES = 25
 INTERLEAGUE_PAIR_GAMES = 3
+STANDINGS_SUFFIX = {
+    CENTRAL: "c",
+    PACIFIC: "p",
+    FARM_EAST: "2e",
+    FARM_CENTRAL: "2c",
+    FARM_WEST: "2w",
+}
 MAKEUP_UNKNOWN_OPPONENT = "TBD"
 MAKEUP_UNKNOWN_OPPONENT_NAME = "未定"
 SCHEDULE_COLUMNS = [
@@ -148,7 +166,10 @@ def _parts_text(cell: dict[str, object], class_name: str) -> str:
 
 
 def fetch_standings(year: int, league: str) -> FetchResult:
-    suffix = {CENTRAL: "c", PACIFIC: "p"}[league]
+    try:
+        suffix = STANDINGS_SUFFIX[league]
+    except KeyError as exc:
+        raise ValueError(f"Unknown standings league: {league}") from exc
     url = f"{BASE_URL}/bis/{year}/stats/std_{suffix}.html"
     html = _fetch_html(url)
     rows = _parse_rows(html)
@@ -185,14 +206,18 @@ def fetch_standings(year: int, league: str) -> FetchResult:
     return FetchResult(pd.DataFrame(data), (url,))
 
 
-def fetch_schedule(year: int, start_date: date | None = None) -> FetchResult:
+def fetch_schedule(
+    year: int,
+    start_date: date | None = None,
+    league: str | None = None,
+) -> FetchResult:
     month_results: list[tuple[int, str, pd.DataFrame]] = []
     months = _schedule_months_for(year, start_date)
     if months:
         worker_count = min(3, len(months))
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
             futures = {
-                executor.submit(_fetch_schedule_month, year, month): month
+                executor.submit(_fetch_schedule_month, year, month, league): month
                 for month in months
             }
             for future in as_completed(futures):
@@ -228,10 +253,19 @@ def _schedule_months_for(year: int, start_date: date | None) -> tuple[int, ...]:
     return tuple(month for month in SCHEDULE_MONTHS if month >= start_month)
 
 
-def _fetch_schedule_month(year: int, month: int) -> tuple[int, str, pd.DataFrame]:
-    url = f"{BASE_URL}/games/{year}/schedule_{month:02d}_detail.html"
+def _fetch_schedule_month(
+    year: int,
+    month: int,
+    league: str | None = None,
+) -> tuple[int, str, pd.DataFrame]:
+    if league is not None and is_farm_league(league):
+        url = f"{BASE_URL}/farm/{year}/schedule_{month:02d}_detail.html"
+    else:
+        url = f"{BASE_URL}/games/{year}/schedule_{month:02d}_detail.html"
     html = _fetch_html(url)
-    return month, url, _parse_schedule_month(html, year)
+    is_farm = league is not None and is_farm_league(league)
+    parser = _parse_farm_schedule_month if is_farm else _parse_schedule_month
+    return month, url, parser(html, year)
 
 
 def fetch_remaining_schedule(
@@ -239,7 +273,7 @@ def fetch_remaining_schedule(
     league: str,
     start_date: date | None = None,
 ) -> FetchResult:
-    result = fetch_schedule(year, start_date)
+    result = fetch_schedule(year, start_date, league=league)
     league_codes = set(league_teams(league))
     frame = result.frame
     frame = frame[
@@ -264,6 +298,11 @@ def append_makeup_placeholders(
             frame[column] = pd.NA
     frame["IsMakeup"] = frame["IsMakeup"].fillna(False).astype(bool)
     frame["DateLabel"] = frame["DateLabel"].fillna("").astype(str)
+
+    # Farm standings are district-based and the official schedule is the
+    # source of truth. Do not invent regular-season or makeup fixtures.
+    if is_farm_league(league):
+        return _sort_schedule(frame)
 
     played_by_team = _played_games_by_team(standings)
     deficits: dict[str, int] = {}
@@ -534,6 +573,73 @@ def _sort_schedule(schedule: pd.DataFrame) -> pd.DataFrame:
     frame = schedule.loc[:, SCHEDULE_COLUMNS].copy()
     frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
     return frame.sort_values(["Date", "HomeTeam", "AwayTeam"]).reset_index(drop=True)
+
+
+def _parse_farm_schedule_month(html: str, year: int) -> pd.DataFrame:
+    """Parse the farm detail table (月日・対戦カード・球場・開始時間)."""
+    rows = _parse_rows(html)
+    games: list[dict[str, object]] = []
+    current_date: pd.Timestamp | None = None
+
+    for row in rows:
+        cells = row.get("cells", [])
+        if not isinstance(cells, list) or len(cells) < 2:
+            continue
+
+        date_match = re.search(r"(\d{1,2})/(\d{1,2})", str(cells[0]["text"]))
+        if date_match:
+            current_date = pd.Timestamp(
+                date(year, int(date_match.group(1)), int(date_match.group(2)))
+            )
+        if current_date is None:
+            continue
+
+        card_text = _clean_text(str(cells[1]["text"]))
+        team_codes = _farm_team_codes(card_text)
+        if len(team_codes) < 2:
+            continue
+
+        score_match = re.search(r"(?<!\d)(\d+)\s*[-－]\s*(\d+)(?!\d)", card_text)
+        is_canceled = "中止" in card_text
+        score1 = int(score_match.group(1)) if score_match else pd.NA
+        score2 = int(score_match.group(2)) if score_match else pd.NA
+        status = "canceled" if is_canceled else "final" if score_match else "scheduled"
+
+        venue_text = _clean_text(str(cells[2]["text"])) if len(cells) >= 3 else ""
+        time_match = re.search(r"\b(\d{1,2}:\d{2})\b", venue_text)
+        start_time = time_match.group(1) if time_match else ""
+        games.append(
+            {
+                "Date": current_date,
+                "HomeTeam": team_codes[0],
+                "AwayTeam": team_codes[1],
+                "HomeTeamName": team_label(team_codes[0]),
+                "AwayTeamName": team_label(team_codes[1]),
+                "Score1": score1,
+                "Score2": score2,
+                "State": "中止" if is_canceled else "-",
+                "Status": status,
+                "Venue": venue_text,
+                "StartTime": start_time,
+                "IsMakeup": False,
+                "DateLabel": f"{current_date.month}/{current_date.day}",
+            }
+        )
+
+    return pd.DataFrame(games, columns=SCHEDULE_COLUMNS)
+
+
+def _farm_team_codes(card_text: str) -> list[str]:
+    aliases = sorted(NPB_NAME_TO_CODE, key=len, reverse=True)
+    pattern = re.compile("|".join(re.escape(alias) for alias in aliases))
+    codes: list[str] = []
+    for match in pattern.finditer(card_text):
+        code = NPB_NAME_TO_CODE[match.group(0)]
+        if code not in codes:
+            codes.append(code)
+        if len(codes) == 2:
+            break
+    return codes
 
 
 def _parse_schedule_month(html: str, year: int) -> pd.DataFrame:

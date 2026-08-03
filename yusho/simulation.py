@@ -33,6 +33,7 @@ def run_simulations(
     simulation_count: int = 10_000,
     seed: int | None = None,
     assumed_win_rates: dict[str, float] | None = None,
+    external_win_rates: dict[str, float] | None = None,
 ) -> SimulationResult:
     teams = league_teams(league)
     if target_team not in teams:
@@ -59,6 +60,7 @@ def run_simulations(
             teams,
             target_team,
             rng,
+            external_win_rates or {},
         )
         if champion_date is None:
             no_champion_count += 1
@@ -94,6 +96,7 @@ def simulate_season(
     teams: tuple[str, ...],
     target_team: str,
     rng: random.Random,
+    external_win_rates: dict[str, float] | None = None,
 ) -> tuple[dict[str, object] | None, dict[str, dict[str, int]]]:
     standings = {
         team: {
@@ -120,8 +123,16 @@ def simulate_season(
             opponent = str(opponent)
             if opponent not in teams:
                 if daily_results[team] is None:
+                    opponent_rate = (external_win_rates or {}).get(opponent)
+                    if opponent_rate is not None:
+                        team_win_prob = odds_ratio(
+                            fixed_win_rates[team],
+                            min(0.999, max(0.001, float(opponent_rate))),
+                        )
+                    else:
+                        team_win_prob = fixed_win_rates[team]
                     daily_results[team] = (
-                        "Win" if rng.random() < fixed_win_rates[team] else "Lose"
+                        "Win" if rng.random() < team_win_prob else "Lose"
                     )
                 continue
             pair = frozenset((team, opponent))
