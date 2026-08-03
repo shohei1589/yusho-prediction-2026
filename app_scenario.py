@@ -409,7 +409,19 @@ def _render_summary(
             st.subheader("優勝確定日 上位")
             _render_table(_top_dates(result.champion_dates))
             st.subheader("平均最終成績")
-            _render_table(_format_final_standings(result.final_standings))
+            _render_table(
+                _format_final_standings_with_advantage(
+                    result.final_standings,
+                    None
+                    if is_farm_league(league)
+                    else result.advantage_probabilities,
+                )
+            )
+            if not is_farm_league(league):
+                st.caption(
+                    "2勝アドバンテージ付与確率は、レギュラーシーズン2位チームがファイナル進出すると仮定し、"
+                    "そのチームが優勝チームから10ゲーム差以上または勝率5割未満となる確率です。"
+                )
 
     with tab_magic:
         _render_magic_analysis(
@@ -1698,6 +1710,31 @@ def _format_final_standings(final_standings: pd.DataFrame) -> pd.DataFrame:
     return frame[["球団", "Wins", "Losses", "Ties"]].rename(
         columns={"Wins": "勝", "Losses": "敗", "Ties": "分"}
     )
+
+
+def _format_final_standings_with_advantage(
+    final_standings: pd.DataFrame,
+    advantage_probabilities: pd.DataFrame | None,
+) -> pd.DataFrame:
+    formatted = _format_final_standings(final_standings)
+    if formatted.empty or advantage_probabilities is None:
+        return formatted
+
+    probability_map = dict(
+        zip(
+            advantage_probabilities["Team"].astype(str),
+            advantage_probabilities["Probability"].astype(float),
+        )
+    )
+    formatted["2勝アドバンテージ付与確率"] = (
+        final_standings["Team"]
+        .astype(str)
+        .map(probability_map)
+        .fillna(0.0)
+        .map(lambda value: f"{value:.1%}")
+        .to_numpy()
+    )
+    return formatted
 
 
 def _format_magic_clinch_table(frame: pd.DataFrame) -> pd.DataFrame:

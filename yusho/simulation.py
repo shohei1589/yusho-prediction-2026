@@ -16,6 +16,7 @@ class SimulationResult:
     champion_dates: pd.DataFrame
     final_standings: pd.DataFrame
     no_champion_count: int
+    advantage_probabilities: pd.DataFrame
 
 
 def odds_ratio(p_a: float, p_b: float) -> float:
@@ -49,6 +50,7 @@ def run_simulations(
 
     champion_dates: list[dict[str, object]] = []
     final_rows: list[dict[str, object]] = []
+    advantage_counts = {team: 0 for team in teams}
     no_champion_count = 0
 
     for _ in range(simulation_count):
@@ -66,6 +68,9 @@ def run_simulations(
             no_champion_count += 1
         else:
             champion_dates.append(champion_date)
+        advantage_team = _two_win_advantage_team(final_standings, teams)
+        if advantage_team is not None:
+            advantage_counts[advantage_team] += 1
         for team, values in final_standings.items():
             final_rows.append({"Team": team, **values})
 
@@ -78,6 +83,14 @@ def run_simulations(
             .mean()
             .sort_values(["Wins", "Losses"], ascending=[False, True])
         )
+    advantage_frame = pd.DataFrame(
+        {
+            "Team": list(advantage_counts),
+            "Probability": [
+                count / simulation_count for count in advantage_counts.values()
+            ],
+        }
+    )
 
     return SimulationResult(
         target_team=target_team,
@@ -85,6 +98,7 @@ def run_simulations(
         champion_dates=date_counts,
         final_standings=final_frame,
         no_champion_count=no_champion_count,
+        advantage_probabilities=advantage_frame,
     )
 
 
@@ -166,6 +180,42 @@ def simulate_season(
 def _current_win_rate(wins: int, losses: int) -> float:
     games = wins + losses
     return wins / games if games else 0.5
+
+
+def _two_win_advantage_team(
+    final_standings: dict[str, dict[str, int]],
+    teams: tuple[str, ...],
+) -> str | None:
+    """Return the champion when the simulated second-place team triggers the rule."""
+    ranked_teams = sorted(
+        teams,
+        key=lambda team: (
+            _current_win_rate(
+                final_standings[team]["Wins"],
+                final_standings[team]["Losses"],
+            ),
+            final_standings[team]["Wins"],
+            -final_standings[team]["Losses"],
+        ),
+        reverse=True,
+    )
+    if len(ranked_teams) < 2:
+        return None
+
+    champion = ranked_teams[0]
+    finalist = ranked_teams[1]
+    champion_values = final_standings[champion]
+    finalist_values = final_standings[finalist]
+    games_behind = (
+        (champion_values["Wins"] - champion_values["Losses"])
+        - (finalist_values["Wins"] - finalist_values["Losses"])
+    ) / 2
+    finalist_win_rate = _current_win_rate(
+        finalist_values["Wins"], finalist_values["Losses"]
+    )
+    if games_behind >= 10 or finalist_win_rate < 0.5:
+        return champion
+    return None
 
 
 def _fixed_win_rates(
