@@ -410,18 +410,9 @@ def _render_summary(
             _render_table(_top_dates(result.champion_dates))
             st.subheader("平均最終成績")
             _render_table(
-                _format_final_standings_with_advantage(
-                    result.final_standings,
-                    None
-                    if is_farm_league(league)
-                    else result.advantage_probabilities,
-                )
+                _format_final_standings_table(result.final_standings),
+                table_class="styled-table final-standings-table",
             )
-            if not is_farm_league(league):
-                st.caption(
-                    "2勝アドバンテージ付与確率は、レギュラーシーズン2位チームがファイナル進出すると仮定し、"
-                    "そのチームが優勝チームから10ゲーム差以上または勝率5割未満となる確率です。"
-                )
 
     with tab_magic:
         _render_magic_analysis(
@@ -708,8 +699,8 @@ def _scenario_signature(
     )
 
 
-def _render_table(frame: pd.DataFrame) -> None:
-    html = frame.to_html(index=False, escape=False, classes="styled-table")
+def _render_table(frame: pd.DataFrame, table_class: str = "styled-table") -> None:
+    html = frame.to_html(index=False, escape=False, classes=table_class)
     st.markdown(f"<div class='table-card'>{html}</div>", unsafe_allow_html=True)
 
 
@@ -1737,6 +1728,35 @@ def _format_final_standings_with_advantage(
     return formatted
 
 
+def _format_final_standings_table(final_standings: pd.DataFrame) -> pd.DataFrame:
+    columns = ["球団", "勝", "敗", "分", "ゲーム差"]
+    if final_standings.empty:
+        return pd.DataFrame(columns=columns)
+
+    frame = final_standings.copy()
+    frame["TeamLabel"] = frame["Team"].map(team_label)
+    for column in ["Wins", "Losses", "Ties"]:
+        frame[column] = frame[column].map(lambda value: f"{value:.1f}")
+    frame["GamesBehind"] = frame["GamesBehind"].map(_games_behind_display)
+    return frame[["TeamLabel", "Wins", "Losses", "Ties", "GamesBehind"]].rename(
+        columns={
+            "TeamLabel": "球団",
+            "Wins": "勝",
+            "Losses": "敗",
+            "Ties": "分",
+            "GamesBehind": "ゲーム差",
+        }
+    )
+
+
+def _games_behind_display(value: float) -> str:
+    value = float(value)
+    text = f"{value:.1f}"
+    if value >= 10.0:
+        return f"<span class='games-behind-alert'>{text}</span>"
+    return text
+
+
 def _format_magic_clinch_table(frame: pd.DataFrame) -> pd.DataFrame:
     columns = ["相手", "自軍残", "相手残", "直接残", "必要勝利", "到達勝率", "相手最高勝率"]
     if frame.empty:
@@ -2596,6 +2616,22 @@ div[data-testid="stDataFrame"] {{
 }}
 .styled-table tr:last-child td {{
   border-bottom: 0;
+}}
+.final-standings-table {{
+  table-layout: fixed;
+}}
+.final-standings-table th:first-child,
+.final-standings-table td:first-child {{
+  width: 40%;
+}}
+.final-standings-table th:nth-child(n+2),
+.final-standings-table td:nth-child(n+2) {{
+  width: 15%;
+  text-align: center;
+}}
+.games-behind-alert {{
+  color: #dc2626;
+  font-weight: 900;
 }}
 .styled-table tbody tr:nth-child(even) {{
   background: {"#1a2638" if dark_mode else "#fbfcfe"};
