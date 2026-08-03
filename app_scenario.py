@@ -396,7 +396,7 @@ def _render_summary(
                 st.session_state[CHART_DIALOG_SELECTION_KEY] = selection_signature
                 st.session_state[CHART_DIALOG_STATE_KEY] = True
             if st.button(
-                "グラフを大画面で表示",
+                "グラフを拡大",
                 key=f"champion_date_chart_expand_{year}_{league}_{target_team}",
             ):
                 st.session_state[CHART_DIALOG_STATE_KEY] = True

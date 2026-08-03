@@ -6,6 +6,10 @@
 
 地区外との交流戦は各チームの残り試合に含め、相手地区のNPB公式勝率を使ってシミュレーションします。ファームでは振替試合を仮置きせず、NPB公式に掲載された日程だけを使用します。
 
+## 検証環境
+
+公開用の `main` ブランチとは別に、`staging` ブランチをStreamlit Community Cloudへデプロイすると、公開前の検証用URLを作成できます。Streamlit側ではRepositoryに `shohei1589/yusho-prediction-2026`、Branchに `staging`、Main file pathに `streamlit_app.py` を指定します。
+
 NPB公式サイトの勝敗表と残り日程を取得し、指定球団の優勝確率と優勝確定日の分布をシミュレーションするStreamlitアプリです。
 
 ## 注意書き
