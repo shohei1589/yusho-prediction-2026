@@ -18,7 +18,12 @@ from yusho.npb_client import (
     schedule_to_daily_opponents,
     standings_as_of,
 )
-from yusho.magic import MagicScenarioAnalysis, analyze_magic_scenario
+from yusho.magic import (
+    MagicAnalysis,
+    MagicScenarioAnalysis,
+    analyze_magic,
+    analyze_magic_scenario,
+)
 from yusho.simulation import SimulationResult, run_simulations
 from yusho.teams import (
     CENTRAL,
@@ -1206,6 +1211,13 @@ def _render_magic_analysis_with_apply(
                 st.rerun()
 
     applied_results = dict(st.session_state.get(applied_state_key, {}))
+    current_magic = analyze_magic(
+        standings,
+        remaining_matrix_schedule,
+        league,
+        target_team,
+        full_schedule,
+    )
     scenario = st.session_state.get(scenario_state_key)
     if scenario is None:
         scenario = analyze_magic_scenario(
@@ -1221,6 +1233,7 @@ def _render_magic_analysis_with_apply(
     widget_prefix = f"{draft_state_key}_{st.session_state[revision_key]}"
     with summary_col:
         _render_magic_scenario_result_applied(
+            current_magic,
             scenario,
             draft_state_key,
             applied_state_key,
@@ -1413,6 +1426,7 @@ def _sync_magic_draft_from_widgets(draft_state_key: str) -> None:
 
 
 def _render_magic_scenario_result_applied(
+    current_magic: MagicAnalysis,
     scenario: MagicScenarioAnalysis,
     draft_state_key: str,
     applied_state_key: str,
@@ -1423,7 +1437,14 @@ def _render_magic_scenario_result_applied(
     target_team: str,
 ) -> None:
     st.markdown("<div class='magic-summary-marker'></div>", unsafe_allow_html=True)
-    st.markdown("<div class='magic-summary-title'>判定サマリー</div>", unsafe_allow_html=True)
+    st.markdown("<div class='magic-summary-title'>現在のマジック点灯状況</div>", unsafe_allow_html=True)
+    metric_cols = st.columns(1)
+    metric_cols[0].metric(
+        "公式勝敗表を基準にした点灯状況",
+        "点灯" if current_magic.is_lit else "未点灯",
+    )
+
+    st.markdown("<div class='magic-summary-title'>入力反映後の判定サマリー</div>", unsafe_allow_html=True)
     metric_cols = st.columns(1)
     metric_cols[0].metric("優勝確認", "優勝" if scenario.is_clinched else "未確定")
     metric_cols[0].metric("マジック点灯確認", "点灯" if scenario.is_lit else "未点灯")
