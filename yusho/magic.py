@@ -86,9 +86,9 @@ def analyze_magic_scenario(
     )
     first_lit_date = _first_timeline_date(timeline, "IsLit")
     first_clinch_date = _first_timeline_date(timeline, "IsClinched")
-    magic_number = _timeline_value(timeline, first_lit_date, "MagicNumber")
-    if magic_number is None and is_lit:
-        magic_number = _overall_required_wins(condition_table)
+    # The summary must show the magic number for the currently applied input,
+    # not the number recorded on the first day that the timeline became lit.
+    magic_number = _overall_required_wins(condition_table) if is_lit else None
 
     current_standings = pd.DataFrame(
         [
