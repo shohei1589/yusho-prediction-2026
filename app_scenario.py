@@ -122,22 +122,16 @@ def main() -> None:
             value=1_000,
             step=1_000,
         )
-        seed_enabled = st.checkbox("乱数を固定", value=True)
-        seed = st.number_input("Seed", min_value=0, max_value=999_999, value=42, step=1)
-        with st.expander("通信設定", expanded=False):
-            verify_ssl = st.toggle(
-                "SSL検証",
-                value=os.getenv("NPB_VERIFY_SSL", "true").lower() not in {"0", "false", "no"},
-                help="NPB公式サイトの証明書を検証します。公開環境ではオン推奨です。",
-            )
-            use_env_proxy = st.toggle(
-                "環境変数プロキシを使う",
-                value=os.getenv("NPB_USE_ENV_PROXY", "false").lower() in {"1", "true", "yes"},
-                help="HTTP_PROXY / HTTPS_PROXY などの環境変数に設定されたプロキシを使います。通常はオフです。",
-            )
         if st.button("公式データを再取得", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
+
+    # Keep reproducibility and connection behavior stable without exposing
+    # operational settings in the public UI.
+    seed_enabled = True
+    seed = 42
+    verify_ssl = os.getenv("NPB_VERIFY_SSL", "true").lower() not in {"0", "false", "no"}
+    use_env_proxy = os.getenv("NPB_USE_ENV_PROXY", "false").lower() in {"1", "true", "yes"}
 
     os.environ["NPB_VERIFY_SSL"] = "true" if verify_ssl else "false"
     os.environ["NPB_USE_ENV_PROXY"] = "true" if use_env_proxy else "false"
