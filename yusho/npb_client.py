@@ -772,7 +772,10 @@ def _parse_schedule_month(html: str, year: int) -> pd.DataFrame:
         place_cell = _first_cell_with_part(cells, "place")
         score1 = _parts_text(game_cell, "score1")
         score2 = _parts_text(game_cell, "score2")
-        state = _parts_text(game_cell, "state")
+        # NPB uses ``state`` for an ordinary game status and ``cancel`` for
+        # a postponed/canceled game. Keep the team pair even when a game has
+        # been canceled so makeup inference can recover the fixed opponent.
+        state = _parts_text(game_cell, "state") or _parts_text(game_cell, "cancel")
         status = _game_status(score1, score2, state)
 
         games.append(
