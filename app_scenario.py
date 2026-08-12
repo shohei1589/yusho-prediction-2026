@@ -267,6 +267,7 @@ def main() -> None:
                 "external_win_rates": external_win_rates,
                 "schedule": completed_schedule,
                 "daily_opponents": daily_opponents,
+                "consumed_games": consumed_games,
                 "signature": scenario_signature,
             }
         stored = st.session_state[result_key]
@@ -275,10 +276,12 @@ def main() -> None:
         displayed_rates = stored["assumed_win_rates"]
         displayed_schedule = stored.get("schedule", completed_schedule)
         displayed_daily_opponents = stored.get("daily_opponents", daily_opponents)
+        displayed_consumed_games = stored.get("consumed_games", consumed_games)
         if stored["signature"] != scenario_signature:
             st.warning("入力が変更されています。結果を更新するには「シミュレーション実行」を押してください。")
             displayed_schedule = completed_schedule
             displayed_daily_opponents = daily_opponents
+            displayed_consumed_games = consumed_games
     except Exception as exc:
         st.error("入力値の変換または計算に失敗しました。")
         st.exception(exc)
@@ -291,6 +294,7 @@ def main() -> None:
         displayed_schedule,
         displayed_daily_opponents,
         full_schedule_result.frame,
+        displayed_consumed_games,
         int(year),
         league,
         target_team,
@@ -361,7 +365,7 @@ def _consume_entered_start_date_games(
     schedule: pd.DataFrame,
     start_date: date,
     target_team: str,
-) -> tuple[pd.DataFrame, pd.DataFrame, list[tuple[str, str]]]:
+) -> tuple[pd.DataFrame, pd.DataFrame, list[tuple[object, str, str, str]]]:
     """Treat entered results from the base date onward as already played.
 
     The editor starts from standings immediately before ``start_date``. If a
@@ -394,7 +398,7 @@ def _consume_entered_start_date_games(
     }
     adjusted = scenario_standings.copy()
     consumed_indices: list[object] = []
-    consumed_pairs: list[tuple[str, str]] = []
+    consumed_games: list[tuple[object, str, str, str]] = []
 
     target_delta = _standing_delta(
         base_by_team[target_team],
@@ -417,7 +421,14 @@ def _consume_entered_start_date_games(
                     opponent_result,
                 )
                 consumed_indices.append(index)
-                consumed_pairs.append((home, away))
+                home_result = (
+                    repeated_result
+                    if home == target_team
+                    else _opposite_result(repeated_result)
+                )
+                consumed_games.append(
+                    (game["Date"], home, away, home_result)
+                )
 
             missing_opponent_deltas: dict[str, tuple[int, int, int]] = {}
             for opponent, expected_delta in expected_opponent_deltas.items():
@@ -434,7 +445,7 @@ def _consume_entered_start_date_games(
                 _add_standing_delta(adjusted, opponent, missing_delta)
 
             remaining = schedule.drop(index=consumed_indices).reset_index(drop=True)
-            return adjusted, remaining, consumed_pairs
+            return adjusted, remaining, consumed_games
 
     for index, game in candidates.iterrows():
         if pd.to_datetime(game["Date"], errors="coerce").date() != start_date:
@@ -461,12 +472,12 @@ def _consume_entered_start_date_games(
             continue
 
         consumed_indices.append(index)
-        consumed_pairs.append((home, away))
+        consumed_games.append((game["Date"], home, away, result))
 
     if not consumed_indices:
         return scenario_standings, schedule, []
     remaining = schedule.drop(index=consumed_indices).reset_index(drop=True)
-    return adjusted, remaining, consumed_pairs
+    return adjusted, remaining, consumed_games
 
 
 def _standing_delta(
@@ -601,6 +612,7 @@ def _render_summary(
     schedule: pd.DataFrame,
     daily_opponents: pd.DataFrame,
     full_schedule: pd.DataFrame,
+    consumed_games: list[tuple[object, str, str, str]],
     year: int,
     league: str,
     target_team: str,
@@ -674,6 +686,7 @@ def _render_summary(
             standings,
             schedule,
             full_schedule,
+            consumed_games,
             year,
             league,
             target_team,
@@ -967,6 +980,7 @@ def _render_magic_analysis(
     standings: pd.DataFrame,
     schedule: pd.DataFrame,
     full_schedule: pd.DataFrame,
+    consumed_games: list[tuple[object, str, str, str]],
     year: int,
     league: str,
     target_team: str,
@@ -975,6 +989,7 @@ def _render_magic_analysis(
         standings,
         schedule,
         full_schedule,
+        consumed_games,
         year,
         league,
         target_team,
@@ -1362,6 +1377,7 @@ def _render_magic_analysis_with_apply(
     standings: pd.DataFrame,
     schedule: pd.DataFrame,
     full_schedule: pd.DataFrame,
+    consumed_games: list[tuple[object, str, str, str]],
     year: int,
     league: str,
     target_team: str,
@@ -1369,6 +1385,10 @@ def _render_magic_analysis_with_apply(
     st.subheader("全試合シナリオ確認")
     remaining_matrix_schedule = _magic_matrix_schedule(schedule)
     past_schedule = _magic_past_schedule(full_schedule, league)
+    magic_full_schedule = _append_consumed_magic_results(
+        full_schedule,
+        consumed_games,
+    )
     if remaining_matrix_schedule.empty and past_schedule.empty:
         st.info("入力できる残り試合はありません。")
         return
@@ -1388,6 +1408,7 @@ def _render_magic_analysis_with_apply(
     applied_state_key = f"magic_matrix_results_{year}_{league}_{target_team}"
     draft_state_key = f"magic_matrix_draft_{year}_{league}_{target_team}"
     scenario_state_key = f"magic_matrix_scenario_{year}_{league}_{target_team}"
+    scenario_signature_key = f"magic_matrix_scenario_signature_{year}_{league}_{target_team}"
     revision_key = f"magic_matrix_revision_{year}_{league}_{target_team}"
     st.session_state.setdefault(applied_state_key, {})
     st.session_state.setdefault(
@@ -1395,6 +1416,11 @@ def _render_magic_analysis_with_apply(
         dict(st.session_state.get(applied_state_key, {})),
     )
     st.session_state.setdefault(revision_key, 0)
+    current_scenario_signature = _magic_scenario_signature(
+        standings,
+        remaining_matrix_schedule,
+        consumed_games,
+    )
 
     summary_col, matrix_col = st.columns([0.78, 4.5])
     with matrix_col:
@@ -1436,16 +1462,20 @@ def _render_magic_analysis_with_apply(
 
     applied_results = dict(st.session_state.get(applied_state_key, {}))
     scenario = st.session_state.get(scenario_state_key)
-    if scenario is None:
+    if (
+        scenario is None
+        or st.session_state.get(scenario_signature_key) != current_scenario_signature
+    ):
         scenario = analyze_magic_scenario(
             standings,
             remaining_matrix_schedule,
             league,
             target_team,
             applied_results,
-            full_schedule,
+            magic_full_schedule,
         )
         st.session_state[scenario_state_key] = scenario
+        st.session_state[scenario_signature_key] = current_scenario_signature
 
     widget_prefix = f"{draft_state_key}_{st.session_state[revision_key]}"
     with summary_col:
@@ -1590,6 +1620,93 @@ def _render_magic_game_matrix_draft(
                         label_visibility="collapsed",
                     )
     st.session_state[widget_map_key] = widget_map
+
+
+def _magic_scenario_signature(
+    standings: pd.DataFrame,
+    schedule: pd.DataFrame,
+    consumed_games: list[tuple[object, str, str, str]],
+) -> tuple[object, ...]:
+    standing_values = tuple(
+        (
+            str(row.Team),
+            int(row.Wins),
+            int(row.Losses),
+            int(row.Ties),
+        )
+        for row in standings.sort_values("Team").itertuples(index=False)
+    )
+    schedule_values = tuple(
+        (
+            str(row.Date),
+            str(row.HomeTeam),
+            str(row.AwayTeam),
+            str(getattr(row, "DateLabel", "")),
+            bool(getattr(row, "IsMakeup", False)),
+        )
+        for row in schedule.sort_values(
+            ["Date", "HomeTeam", "AwayTeam"]
+        ).itertuples(index=False)
+    )
+    consumed_values = tuple(
+        (str(game_date), home, away, result)
+        for game_date, home, away, result in consumed_games
+    )
+    return standing_values, schedule_values, consumed_values
+
+
+def _append_consumed_magic_results(
+    full_schedule: pd.DataFrame,
+    consumed_games: list[tuple[object, str, str, str]],
+) -> pd.DataFrame:
+    """Add manually consumed results to the direct-record source.
+
+    The simulation removes these games from the remaining schedule. Magic
+    tie-break checks still need their head-to-head results, so add synthetic
+    final rows when NPB has not published a score yet.
+    """
+    if not consumed_games:
+        return full_schedule
+    frame = full_schedule.copy()
+    rows: list[dict[str, object]] = []
+    for game_date, home, away, result in consumed_games:
+        date_value = pd.to_datetime(game_date, errors="coerce")
+        if pd.isna(date_value):
+            continue
+        existing = frame[
+            (pd.to_datetime(frame["Date"], errors="coerce") == date_value)
+            & (frame["HomeTeam"].astype(str) == home)
+            & (frame["AwayTeam"].astype(str) == away)
+            & frame["Status"].astype(str).eq("final")
+            & pd.to_numeric(frame["Score1"], errors="coerce").notna()
+            & pd.to_numeric(frame["Score2"], errors="coerce").notna()
+        ]
+        if not existing.empty:
+            continue
+        if result == "Win":
+            score_home, score_away = 1, 0
+        elif result == "Lose":
+            score_home, score_away = 0, 1
+        else:
+            score_home, score_away = 1, 1
+        row = {column: pd.NA for column in frame.columns}
+        row.update(
+            {
+                "Date": date_value,
+                "HomeTeam": home,
+                "AwayTeam": away,
+                "Score1": score_home,
+                "Score2": score_away,
+                "State": "-",
+                "Status": "final",
+                "IsMakeup": False,
+                "DateLabel": "",
+            }
+        )
+        rows.append(row)
+    if not rows:
+        return frame
+    return pd.concat([frame, pd.DataFrame(rows, columns=frame.columns)], ignore_index=True)
 
 
 def _magic_editable_team(
