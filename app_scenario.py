@@ -212,7 +212,7 @@ def main() -> None:
             full_schedule_result.frame,
             start_date,
         )
-        scenario_standings, base_date_schedule, consumed_today = (
+        scenario_standings, base_date_schedule, consumed_games = (
             _consume_entered_start_date_games(
                 base_standings,
                 scenario_standings,
@@ -221,10 +221,10 @@ def main() -> None:
                 target_team,
             )
         )
-        if consumed_today:
+        if consumed_games:
             st.info(
-                f"基準日当日の入力結果を反映し、{start_date.month}/{start_date.day}の"
-                "試合を消化済みとして残り日程から除外しました。"
+                f"入力された{team_label(target_team)}の勝敗を反映し、"
+                f"{len(consumed_games)}試合を消化済みとして残り日程から除外しました。"
             )
         completed_schedule = append_makeup_placeholders(
             base_date_schedule,
@@ -362,21 +362,25 @@ def _consume_entered_start_date_games(
     start_date: date,
     target_team: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[tuple[str, str]]]:
-    """Treat an entered result for today's game as an already-played game.
+    """Treat entered results from the base date onward as already played.
 
     The editor starts from standings immediately before ``start_date``. If a
-    user enters the result of a scheduled game on that date, keeping the game
-    in the simulation would count it twice. The target team's one-game change
-    is enough to infer the opponent's complementary result when the opponent
-    was left untouched.
+    user enters a result for a scheduled game, keeping it in the simulation
+    would count it twice. A repeated result such as +2 wins is assigned to the
+    target team's games in chronological order.
     """
     if schedule.empty or "Date" not in schedule.columns:
         return scenario_standings, schedule, []
 
     candidates = schedule[
-        (pd.to_datetime(schedule["Date"], errors="coerce") == pd.Timestamp(start_date))
-        & schedule["Status"].isin(["scheduled", "in_progress"])
-    ]
+        schedule["Status"].isin(["scheduled", "in_progress"])
+        & (
+            (schedule["HomeTeam"] == target_team)
+            | (schedule["AwayTeam"] == target_team)
+        )
+    ].copy()
+    candidates["_sort_date"] = pd.to_datetime(candidates["Date"], errors="coerce")
+    candidates = candidates.sort_values(["_sort_date", "HomeTeam", "AwayTeam"])
     if candidates.empty:
         return scenario_standings, schedule, []
 
@@ -392,7 +396,49 @@ def _consume_entered_start_date_games(
     consumed_indices: list[object] = []
     consumed_pairs: list[tuple[str, str]] = []
 
+    target_delta = _standing_delta(
+        base_by_team[target_team],
+        entered_by_team[target_team],
+    )
+    repeated_result = _repeated_game_result(target_delta)
+    if repeated_result is not None:
+        game_count = sum(target_delta)
+        if game_count <= len(candidates):
+            selected = candidates.head(game_count)
+            expected_opponent_deltas: dict[str, tuple[int, int, int]] = {}
+            for index, game in selected.iterrows():
+                home = str(game["HomeTeam"])
+                away = str(game["AwayTeam"])
+                opponent = away if home == target_team else home
+                opponent_result = _opposite_result(repeated_result)
+                previous = expected_opponent_deltas.get(opponent, (0, 0, 0))
+                expected_opponent_deltas[opponent] = _add_result_delta(
+                    previous,
+                    opponent_result,
+                )
+                consumed_indices.append(index)
+                consumed_pairs.append((home, away))
+
+            missing_opponent_deltas: dict[str, tuple[int, int, int]] = {}
+            for opponent, expected_delta in expected_opponent_deltas.items():
+                actual_delta = _standing_delta(
+                    base_by_team[opponent],
+                    entered_by_team[opponent],
+                )
+                missing_delta = _missing_result_delta(actual_delta, expected_delta)
+                if missing_delta is None:
+                    return scenario_standings, schedule, []
+                missing_opponent_deltas[opponent] = missing_delta
+
+            for opponent, missing_delta in missing_opponent_deltas.items():
+                _add_standing_delta(adjusted, opponent, missing_delta)
+
+            remaining = schedule.drop(index=consumed_indices).reset_index(drop=True)
+            return adjusted, remaining, consumed_pairs
+
     for index, game in candidates.iterrows():
+        if pd.to_datetime(game["Date"], errors="coerce").date() != start_date:
+            break
         home = str(game["HomeTeam"])
         away = str(game["AwayTeam"])
         if home not in base_by_team or away not in base_by_team:
@@ -434,6 +480,18 @@ def _is_single_game_delta(delta: tuple[int, int, int]) -> bool:
     return delta in {(1, 0, 0), (0, 1, 0), (0, 0, 1)}
 
 
+def _repeated_game_result(delta: tuple[int, int, int]) -> str | None:
+    if sum(delta) <= 0:
+        return None
+    if delta[0] > 0 and delta[1:] == (0, 0):
+        return "Win"
+    if delta[1] > 0 and delta[0] == delta[2] == 0:
+        return "Lose"
+    if delta[2] > 0 and delta[:2] == (0, 0):
+        return "Tie"
+    return None
+
+
 def _delta_to_result(delta: tuple[int, int, int]) -> str:
     return {
         (1, 0, 0): "Win",
@@ -457,6 +515,49 @@ def _matching_game_result(
 
 def _opposite_result(result: str) -> str:
     return {"Win": "Lose", "Lose": "Win", "Tie": "Tie"}[result]
+
+
+def _result_delta(result: str) -> tuple[int, int, int]:
+    return {"Win": (1, 0, 0), "Lose": (0, 1, 0), "Tie": (0, 0, 1)}[result]
+
+
+def _add_result_delta(
+    current: tuple[int, int, int],
+    result: str,
+) -> tuple[int, int, int]:
+    delta = _result_delta(result)
+    return tuple(current[index] + delta[index] for index in range(3))
+
+
+def _missing_result_delta(
+    actual: tuple[int, int, int],
+    expected: tuple[int, int, int],
+) -> tuple[int, int, int] | None:
+    nonzero = [index for index, value in enumerate(expected) if value]
+    if not nonzero:
+        return (0, 0, 0)
+    axis = nonzero[0]
+    if any(value != 0 for index, value in enumerate(actual) if index != axis):
+        return None
+    if actual[axis] < 0 or actual[axis] > expected[axis]:
+        return None
+    return tuple(
+        expected[index] - actual[index]
+        for index in range(3)
+    )
+
+
+def _add_standing_delta(
+    standings: pd.DataFrame,
+    team: str,
+    delta: tuple[int, int, int],
+) -> None:
+    row_index = standings.index[standings["Team"].astype(str) == team]
+    if len(row_index) != 1:
+        return
+    index = row_index[0]
+    for column, value in zip(("Wins", "Losses", "Ties"), delta):
+        standings.at[index, column] = int(standings.at[index, column]) + value
 
 
 def _complete_opponent_result(
