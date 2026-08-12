@@ -190,7 +190,7 @@ def main() -> None:
     with editor_col:
         with st.expander("勝敗を編集", expanded=True):
             st.markdown(
-                "<div class='scenario-caption'>初期値はNPB公式値です。過去日を基準日にすると、その日の試合開始前時点の勝・敗・分を公式結果から再構成します。</div>",
+                "<div class='scenario-caption'>初期値はNPB公式値です。過去日を基準日にすると、その日の試合開始前時点の勝・敗・分を公式結果から再構成します。基準日当日の結果を入力した場合は、消化済みとして残り日程から除外します。</div>",
                 unsafe_allow_html=True,
             )
             reset_col, note_col = st.columns([0.9, 4.8])
@@ -212,6 +212,20 @@ def main() -> None:
             full_schedule_result.frame,
             start_date,
         )
+        scenario_standings, base_date_schedule, consumed_today = (
+            _consume_entered_start_date_games(
+                base_standings,
+                scenario_standings,
+                base_date_schedule,
+                start_date,
+                target_team,
+            )
+        )
+        if consumed_today:
+            st.info(
+                f"基準日当日の入力結果を反映し、{start_date.month}/{start_date.day}の"
+                "試合を消化済みとして残り日程から除外しました。"
+            )
         completed_schedule = append_makeup_placeholders(
             base_date_schedule,
             scenario_standings,
@@ -339,6 +353,124 @@ def _schedule_from_base_date(
         & frame["Status"].isin(["final", "scheduled", "in_progress"])
     ]
     return frame.sort_values(["Date", "HomeTeam", "AwayTeam"]).reset_index(drop=True)
+
+
+def _consume_entered_start_date_games(
+    base_standings: pd.DataFrame,
+    scenario_standings: pd.DataFrame,
+    schedule: pd.DataFrame,
+    start_date: date,
+    target_team: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, list[tuple[str, str]]]:
+    """Treat an entered result for today's game as an already-played game.
+
+    The editor starts from standings immediately before ``start_date``. If a
+    user enters the result of a scheduled game on that date, keeping the game
+    in the simulation would count it twice. The target team's one-game change
+    is enough to infer the opponent's complementary result when the opponent
+    was left untouched.
+    """
+    if schedule.empty or "Date" not in schedule.columns:
+        return scenario_standings, schedule, []
+
+    candidates = schedule[
+        (pd.to_datetime(schedule["Date"], errors="coerce") == pd.Timestamp(start_date))
+        & schedule["Status"].isin(["scheduled", "in_progress"])
+    ]
+    if candidates.empty:
+        return scenario_standings, schedule, []
+
+    base_by_team = {
+        str(row.Team): (int(row.Wins), int(row.Losses), int(row.Ties))
+        for row in base_standings.itertuples(index=False)
+    }
+    entered_by_team = {
+        str(row.Team): (int(row.Wins), int(row.Losses), int(row.Ties))
+        for row in scenario_standings.itertuples(index=False)
+    }
+    adjusted = scenario_standings.copy()
+    consumed_indices: list[object] = []
+    consumed_pairs: list[tuple[str, str]] = []
+
+    for index, game in candidates.iterrows():
+        home = str(game["HomeTeam"])
+        away = str(game["AwayTeam"])
+        if home not in base_by_team or away not in base_by_team:
+            continue
+
+        home_delta = _standing_delta(base_by_team[home], entered_by_team[home])
+        away_delta = _standing_delta(base_by_team[away], entered_by_team[away])
+        result = _matching_game_result(home_delta, away_delta)
+        if result is None and target_team in {home, away}:
+            target_delta = home_delta if target_team == home else away_delta
+            if _is_single_game_delta(target_delta):
+                target_result = _delta_to_result(target_delta)
+                result = target_result if target_team == home else _opposite_result(target_result)
+                _complete_opponent_result(
+                    adjusted,
+                    away if target_team == home else home,
+                    target_result,
+                )
+        if result is None:
+            continue
+
+        consumed_indices.append(index)
+        consumed_pairs.append((home, away))
+
+    if not consumed_indices:
+        return scenario_standings, schedule, []
+    remaining = schedule.drop(index=consumed_indices).reset_index(drop=True)
+    return adjusted, remaining, consumed_pairs
+
+
+def _standing_delta(
+    base: tuple[int, int, int],
+    entered: tuple[int, int, int],
+) -> tuple[int, int, int]:
+    return tuple(entered[index] - base[index] for index in range(3))
+
+
+def _is_single_game_delta(delta: tuple[int, int, int]) -> bool:
+    return delta in {(1, 0, 0), (0, 1, 0), (0, 0, 1)}
+
+
+def _delta_to_result(delta: tuple[int, int, int]) -> str:
+    return {
+        (1, 0, 0): "Win",
+        (0, 1, 0): "Lose",
+        (0, 0, 1): "Tie",
+    }[delta]
+
+
+def _matching_game_result(
+    home_delta: tuple[int, int, int],
+    away_delta: tuple[int, int, int],
+) -> str | None:
+    if home_delta == (1, 0, 0) and away_delta == (0, 1, 0):
+        return "Win"
+    if home_delta == (0, 1, 0) and away_delta == (1, 0, 0):
+        return "Lose"
+    if home_delta == (0, 0, 1) and away_delta == (0, 0, 1):
+        return "Tie"
+    return None
+
+
+def _opposite_result(result: str) -> str:
+    return {"Win": "Lose", "Lose": "Win", "Tie": "Tie"}[result]
+
+
+def _complete_opponent_result(
+    standings: pd.DataFrame,
+    opponent: str,
+    target_result: str,
+) -> None:
+    result = _opposite_result(target_result)
+    row_index = standings.index[standings["Team"].astype(str) == opponent]
+    if len(row_index) != 1:
+        return
+    index = row_index[0]
+    column = {"Win": "Wins", "Lose": "Losses", "Tie": "Ties"}[result]
+    standings.at[index, column] = int(standings.at[index, column]) + 1
 
 
 @st.cache_data(ttl=60 * 30, show_spinner=False)
@@ -471,6 +603,7 @@ def _render_summary(
         st.markdown(
             """
 - 基準日は「その日の試合開始前」として扱います。
+- 基準日当日の試合結果を勝敗表へ入力した場合は、その試合を消化済みとして残り日程から除外します。相手側を未入力のままにした場合は、反対結果を自動補完します。
 - 勝敗表の初期値はNPB.jpから取得した現在値です。基準日が過去の場合は、その日の試合開始前時点の勝・敗・分を公式結果から再構成します。
 - 今後の想定勝率は、残り試合の勝敗確率を決めるために使います。
 - 残り試合はモンテカルロ法で多数回シミュレーションし、優勝確率と優勝確定日分布を推定します。
