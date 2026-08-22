@@ -2190,6 +2190,7 @@ def _render_schedule_calendar(
     start_date: date,
 ) -> None:
     """Render a month calendar combining champion-date probability and fixtures."""
+    start_timestamp = pd.Timestamp(start_date).normalize()
     probability_map: dict[pd.Timestamp, float] = {}
     if not champion_dates.empty and "Date" in champion_dates.columns:
         probability_frame = champion_dates.copy()
@@ -2200,6 +2201,9 @@ def _render_schedule_calendar(
             probability_frame["Probability"], errors="coerce"
         ).fillna(0.0)
         probability_frame = probability_frame.dropna(subset=["Date"])
+        probability_frame = probability_frame[
+            probability_frame["Date"] >= start_timestamp
+        ]
         probability_map = {
             pd.Timestamp(row.Date): float(row.Probability)
             for row in probability_frame.groupby("Date", as_index=False)["Probability"]
@@ -2207,8 +2211,8 @@ def _render_schedule_calendar(
             .itertuples(index=False)
         }
 
-    fixture_map: dict[pd.Timestamp, list[str]] = {}
-    date_values: list[pd.Timestamp] = list(probability_map)
+    fixture_map: dict[pd.Timestamp, list[tuple[str, str]]] = {}
+    date_values: list[pd.Timestamp] = [start_timestamp, *probability_map]
     if not schedule.empty and "Date" in schedule.columns:
         fixture_frame = schedule.copy()
         fixture_frame["Date"] = pd.to_datetime(
@@ -2220,7 +2224,7 @@ def _render_schedule_calendar(
             | (fixture_frame["AwayTeam"] == target_team)
         ]
         for game_date, group in fixture_frame.groupby("Date", sort=True):
-            opponents: list[str] = []
+            opponents: list[tuple[str, str]] = []
             for row in group.itertuples(index=False):
                 opponent = row.AwayTeam if row.HomeTeam == target_team else row.HomeTeam
                 opponent_label = _schedule_team_label(opponent)
@@ -2228,12 +2232,13 @@ def _render_schedule_calendar(
                 if pd.isna(venue_value):
                     venue_value = ""
                 venue_label = str(venue_value).strip()
-                if venue_label and venue_label.lower() not in {"nan", "<na>"}:
-                    opponent_label = f"{opponent_label}@{venue_label}"
+                if venue_label.lower() in {"nan", "<na>"}:
+                    venue_label = ""
                 if bool(getattr(row, "IsMakeup", False)):
                     opponent_label = f"振替: {opponent_label}"
-                if opponent_label not in opponents:
-                    opponents.append(opponent_label)
+                opponent_item = (opponent_label, venue_label)
+                if opponent_item not in opponents:
+                    opponents.append(opponent_item)
             fixture_map[pd.Timestamp(game_date)] = opponents
         date_values.extend(fixture_map)
 
@@ -2249,11 +2254,17 @@ def _render_schedule_calendar(
         f"schedule_calendar_month_{year}_{league}_{target_team}_"
         f"{start_date.isoformat()}"
     )
+    calendar_context_key = (
+        f"schedule_calendar_context_{year}_{league}_{target_team}"
+    )
     default_month = pd.Timestamp(start_date).to_period("M")
     if default_month < minimum_month:
         default_month = minimum_month
     if default_month > maximum_month:
         default_month = maximum_month
+    if st.session_state.get(calendar_context_key) != start_date.isoformat():
+        st.session_state[month_key] = str(default_month)
+        st.session_state[calendar_context_key] = start_date.isoformat()
     try:
         current_month = pd.Period(
             st.session_state.get(month_key, str(default_month)), freq="M"
@@ -2271,6 +2282,8 @@ def _render_schedule_calendar(
             use_container_width=True,
         ):
             current_month -= 1
+            st.session_state[month_key] = str(current_month)
+            st.rerun()
     with navigation[1]:
         st.markdown(
             f"<div class='schedule-calendar-title'>{current_month.year}年{current_month.month}月</div>",
@@ -2284,6 +2297,8 @@ def _render_schedule_calendar(
             use_container_width=True,
         ):
             current_month += 1
+            st.session_state[month_key] = str(current_month)
+            st.rerun()
     st.session_state[month_key] = str(current_month)
 
     month_start = current_month.start_time.normalize()
@@ -2315,8 +2330,15 @@ def _render_schedule_calendar(
         if max_probability > 0 and probability > 0:
             intensity = min(4, max(1, int(round(probability / max_probability * 4))))
         opponent_html = "".join(
-            f"<span class='schedule-calendar-opponent'>{escape(opponent)}</span>"
-            for opponent in opponents
+            "<span class='schedule-calendar-opponent'>"
+            f"<span class='schedule-calendar-team'>{escape(opponent)}</span>"
+            + (
+                f"<span class='schedule-calendar-venue'>{escape(venue)}</span>"
+                if venue
+                else ""
+            )
+            + "</span>"
+            for opponent, venue in opponents
         )
         probability_text = "0%" if probability <= 0 else f"{probability * 100:.1f}%"
         cells.append(
@@ -2330,10 +2352,11 @@ def _render_schedule_calendar(
     while len(cells) % 7:
         cells.append("<div class='schedule-calendar-cell schedule-calendar-empty'></div>")
 
+    total_probability = sum(probability_map.values()) * 100
     st.markdown(
         "<div class='schedule-calendar-card'>"
         f"<div class='schedule-calendar-heading'><strong>{escape(team_label(target_team))}</strong>"
-        "<span>優勝確定日確率（合計）</span></div>"
+        f"<span>優勝確定日確率（合計） <b>{total_probability:.1f}%</b></span></div>"
         f"<div class='schedule-calendar-weekdays'>{weekday_html}</div>"
         f"<div class='schedule-calendar-grid'>{''.join(cells)}</div>"
         "<div class='schedule-calendar-caption'>対戦相手は対象球団の残り日程、確率はシミュレーション結果です。</div>"
@@ -3068,6 +3091,12 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-date) > div {{
   font-size: 0.74rem;
   font-weight: 800;
 }}
+.schedule-calendar-heading b {{
+  margin-left: 0.3rem;
+  color: {primary};
+  font-size: 1.02rem;
+  font-weight: 900;
+}}
 .schedule-calendar-weekdays,
 .schedule-calendar-grid {{
   display: grid;
@@ -3115,13 +3144,26 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-date) > div {{
 .schedule-calendar-opponent {{
   display: block;
   margin-top: 0.25rem;
-  overflow: hidden;
   color: {primary};
   font-size: 0.72rem;
   line-height: 1.15;
   font-weight: 900;
+}}
+.schedule-calendar-team,
+.schedule-calendar-venue {{
+  display: block;
+  overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}}
+.schedule-calendar-venue {{
+  margin-top: 0.16rem;
+  padding-top: 0.14rem;
+  border-top: 1px solid {primary};
+  color: {muted};
+  font-size: 0.64rem;
+  line-height: 1.1;
+  font-weight: 800;
 }}
 .schedule-calendar-probability {{
   position: absolute;
@@ -3465,6 +3507,9 @@ button[kind="primary"] {{
   .schedule-calendar-opponent {{
     font-size: 0.66rem;
   }}
+  .schedule-calendar-venue {{
+    font-size: 0.58rem;
+  }}
   .schedule-calendar-probability {{
     right: 0.25rem;
     bottom: 0.28rem;
@@ -3637,6 +3682,11 @@ button[kind="primary"] {{
   .schedule-calendar-opponent {{
     margin-top: 0.18rem;
     font-size: 0.58rem;
+  }}
+  .schedule-calendar-venue {{
+    margin-top: 0.12rem;
+    padding-top: 0.1rem;
+    font-size: 0.5rem;
   }}
   .schedule-calendar-probability {{
     right: 0.16rem;
