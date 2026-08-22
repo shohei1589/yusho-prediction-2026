@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from html import escape
 import os
 import re
 import time
@@ -709,6 +710,14 @@ def _render_summary(
 
     with tab_schedule:
         st.caption(f"基準日: {start_date.isoformat()} 以降の{team_label(target_team)}戦だけを表示しています。")
+        _render_schedule_calendar(
+            result.champion_dates,
+            schedule,
+            target_team,
+            int(year),
+            league,
+            start_date,
+        )
         _render_table(_format_schedule(schedule, target_team))
         if makeup_summary:
             st.markdown(makeup_summary, unsafe_allow_html=True)
@@ -2172,6 +2181,158 @@ def _needed_wins_display(value: object) -> str:
     return "確定済み" if wins == 0 else f"+{wins}勝"
 
 
+def _render_schedule_calendar(
+    champion_dates: pd.DataFrame,
+    schedule: pd.DataFrame,
+    target_team: str,
+    year: int,
+    league: str,
+    start_date: date,
+) -> None:
+    """Render a month calendar combining champion-date probability and fixtures."""
+    probability_map: dict[pd.Timestamp, float] = {}
+    if not champion_dates.empty and "Date" in champion_dates.columns:
+        probability_frame = champion_dates.copy()
+        probability_frame["Date"] = pd.to_datetime(
+            probability_frame["Date"], errors="coerce"
+        ).dt.normalize()
+        probability_frame["Probability"] = pd.to_numeric(
+            probability_frame["Probability"], errors="coerce"
+        ).fillna(0.0)
+        probability_frame = probability_frame.dropna(subset=["Date"])
+        probability_map = {
+            pd.Timestamp(row.Date): float(row.Probability)
+            for row in probability_frame.groupby("Date", as_index=False)["Probability"]
+            .sum()
+            .itertuples(index=False)
+        }
+
+    fixture_map: dict[pd.Timestamp, list[str]] = {}
+    date_values: list[pd.Timestamp] = list(probability_map)
+    if not schedule.empty and "Date" in schedule.columns:
+        fixture_frame = schedule.copy()
+        fixture_frame["Date"] = pd.to_datetime(
+            fixture_frame["Date"], errors="coerce"
+        ).dt.normalize()
+        fixture_frame = fixture_frame.dropna(subset=["Date"])
+        fixture_frame = fixture_frame[
+            (fixture_frame["HomeTeam"] == target_team)
+            | (fixture_frame["AwayTeam"] == target_team)
+        ]
+        for game_date, group in fixture_frame.groupby("Date", sort=True):
+            opponents: list[str] = []
+            for row in group.itertuples(index=False):
+                opponent = row.AwayTeam if row.HomeTeam == target_team else row.HomeTeam
+                opponent_label = _schedule_team_label(opponent)
+                if bool(getattr(row, "IsMakeup", False)):
+                    opponent_label = f"振替: {opponent_label}"
+                if opponent_label not in opponents:
+                    opponents.append(opponent_label)
+            fixture_map[pd.Timestamp(game_date)] = opponents
+        date_values.extend(fixture_map)
+
+    if not date_values:
+        st.info("表示できる優勝確率・残り日程がありません。")
+        return
+
+    minimum_date = min(date_values)
+    maximum_date = max(date_values)
+    minimum_month = minimum_date.to_period("M")
+    maximum_month = maximum_date.to_period("M")
+    month_key = f"schedule_calendar_month_{year}_{league}_{target_team}"
+    default_month = pd.Timestamp(start_date).to_period("M")
+    if default_month < minimum_month:
+        default_month = minimum_month
+    if default_month > maximum_month:
+        default_month = maximum_month
+    try:
+        current_month = pd.Period(
+            st.session_state.get(month_key, str(default_month)), freq="M"
+        )
+    except (TypeError, ValueError):
+        current_month = default_month
+    current_month = min(max(current_month, minimum_month), maximum_month)
+
+    navigation = st.columns([1, 4, 1])
+    with navigation[0]:
+        if st.button(
+            "‹",
+            key=f"schedule_calendar_prev_{year}_{league}_{target_team}",
+            disabled=current_month <= minimum_month,
+            use_container_width=True,
+        ):
+            current_month -= 1
+    with navigation[1]:
+        st.markdown(
+            f"<div class='schedule-calendar-title'>{current_month.year}年{current_month.month}月</div>",
+            unsafe_allow_html=True,
+        )
+    with navigation[2]:
+        if st.button(
+            "›",
+            key=f"schedule_calendar_next_{year}_{league}_{target_team}",
+            disabled=current_month >= maximum_month,
+            use_container_width=True,
+        ):
+            current_month += 1
+    st.session_state[month_key] = str(current_month)
+
+    month_start = current_month.start_time.normalize()
+    month_end = current_month.end_time.normalize()
+    day_values = pd.date_range(month_start, month_end, freq="D")
+    cells: list[str] = [
+        "<div class='schedule-calendar-cell schedule-calendar-empty'></div>"
+    ] * int(month_start.weekday())
+    weekday_names = ["月", "火", "水", "木", "金", "土", "日"]
+    weekday_html = "".join(
+        f"<div class='schedule-calendar-weekday weekday-{index}'>{name}</div>"
+        for index, name in enumerate(weekday_names)
+    )
+    max_probability = max(probability_map.values(), default=0.0)
+    target_color = TEAM_ACCENT_COLORS.get(target_team, "#2f6f8f")
+
+    for day in day_values:
+        day = pd.Timestamp(day).normalize()
+        probability = float(probability_map.get(day, 0.0))
+        opponents = fixture_map.get(day, [])
+        has_content = bool(opponents) or probability > 0
+        if not has_content:
+            cells.append(
+                f"<div class='schedule-calendar-cell schedule-calendar-day-empty'>"
+                f"<span class='schedule-calendar-day-number'>{day.day}</span></div>"
+            )
+            continue
+        intensity = 0
+        if max_probability > 0 and probability > 0:
+            intensity = min(4, max(1, int(round(probability / max_probability * 4))))
+        opponent_html = "".join(
+            f"<span class='schedule-calendar-opponent'>{escape(opponent)}</span>"
+            for opponent in opponents
+        )
+        probability_text = "0%" if probability <= 0 else f"{probability * 100:.1f}%"
+        cells.append(
+            f"<div class='schedule-calendar-cell schedule-calendar-event probability-{intensity}' "
+            f"style='--calendar-accent:{target_color};'>"
+            f"<span class='schedule-calendar-day-number'>{day.day}</span>"
+            f"{opponent_html}"
+            f"<span class='schedule-calendar-probability'>{probability_text}</span>"
+            "</div>"
+        )
+    while len(cells) % 7:
+        cells.append("<div class='schedule-calendar-cell schedule-calendar-empty'></div>")
+
+    st.markdown(
+        "<div class='schedule-calendar-card'>"
+        f"<div class='schedule-calendar-heading'><strong>{escape(team_label(target_team))}</strong>"
+        "<span>優勝確定日確率（合計）</span></div>"
+        f"<div class='schedule-calendar-weekdays'>{weekday_html}</div>"
+        f"<div class='schedule-calendar-grid'>{''.join(cells)}</div>"
+        "<div class='schedule-calendar-caption'>対戦相手は対象球団の残り日程、確率はシミュレーション結果です。</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _format_schedule(schedule: pd.DataFrame, target_team: str) -> pd.DataFrame:
     columns = ["日付", "カード", "球場", "開始"]
     if schedule.empty or "Date" not in schedule.columns:
@@ -2859,6 +3020,115 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-date) > div {{
   line-height: 1.45;
   font-weight: 800;
 }}
+.schedule-calendar-card {{
+  width: 100%;
+  margin: 0.35rem 0 1rem;
+  border: 1px solid {border};
+  border-radius: 10px;
+  background: {surface};
+  box-shadow: {shadow};
+  overflow: hidden;
+}}
+.schedule-calendar-title {{
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: {text};
+  font-size: 1.18rem;
+  font-weight: 900;
+  text-align: center;
+}}
+.schedule-calendar-heading {{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.72rem 0.9rem;
+  border-bottom: 1px solid {border};
+  background: {surface_soft};
+  color: {text};
+  font-size: 0.9rem;
+}}
+.schedule-calendar-heading strong {{
+  color: {primary};
+  font-size: 1.02rem;
+}}
+.schedule-calendar-heading span {{
+  color: {muted};
+  font-size: 0.74rem;
+  font-weight: 800;
+}}
+.schedule-calendar-weekdays,
+.schedule-calendar-grid {{
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}}
+.schedule-calendar-weekday {{
+  padding: 0.42rem 0.18rem;
+  border-right: 1px solid {border};
+  border-bottom: 1px solid {border};
+  background: {surface_soft};
+  color: {muted};
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-align: center;
+}}
+.schedule-calendar-weekday:last-child {{ border-right: 0; }}
+.schedule-calendar-weekday.weekday-5 {{ color: #2563eb; }}
+.schedule-calendar-weekday.weekday-6 {{ color: #d71920; }}
+.schedule-calendar-cell {{
+  position: relative;
+  box-sizing: border-box;
+  min-height: 94px;
+  padding: 0.38rem 0.4rem;
+  border-right: 1px solid {border};
+  border-bottom: 1px solid {border};
+  background: {surface};
+  color: {text};
+}}
+.schedule-calendar-cell:nth-child(7n) {{ border-right: 0; }}
+.schedule-calendar-grid .schedule-calendar-cell:nth-last-child(-n + 7) {{ border-bottom: 0; }}
+.schedule-calendar-day-empty {{ background: {surface_soft}; opacity: 0.66; }}
+.schedule-calendar-empty {{ background: {surface_soft}; opacity: 0.4; }}
+.schedule-calendar-event {{ background: {surface}; }}
+.schedule-calendar-event.probability-1 {{ background: #eef2f6; }}
+.schedule-calendar-event.probability-2 {{ background: #e5edf8; }}
+.schedule-calendar-event.probability-3 {{ background: #d8e6f7; }}
+.schedule-calendar-event.probability-4 {{ background: #fff2bf; }}
+.schedule-calendar-day-number {{
+  display: block;
+  color: {muted};
+  font-size: 0.78rem;
+  line-height: 1.1;
+  font-weight: 900;
+}}
+.schedule-calendar-opponent {{
+  display: block;
+  margin-top: 0.25rem;
+  overflow: hidden;
+  color: {primary};
+  font-size: 0.72rem;
+  line-height: 1.15;
+  font-weight: 900;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}}
+.schedule-calendar-probability {{
+  position: absolute;
+  right: 0.42rem;
+  bottom: 0.38rem;
+  color: {primary};
+  font-size: 1.15rem;
+  line-height: 1;
+  font-weight: 900;
+}}
+.schedule-calendar-caption {{
+  padding: 0.52rem 0.8rem;
+  color: {muted};
+  font-size: 0.72rem;
+  font-weight: 700;
+}}
 div[data-testid="stMetric"] {{
   background: {surface};
   border: 1px solid {border};
@@ -3173,6 +3443,24 @@ button[kind="primary"] {{
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }}
+  .schedule-calendar-card {{
+    margin-top: 0.25rem;
+  }}
+  .schedule-calendar-cell {{
+    min-height: 78px;
+    padding: 0.32rem 0.25rem;
+  }}
+  .schedule-calendar-heading {{
+    padding: 0.6rem 0.7rem;
+  }}
+  .schedule-calendar-opponent {{
+    font-size: 0.66rem;
+  }}
+  .schedule-calendar-probability {{
+    right: 0.25rem;
+    bottom: 0.28rem;
+    font-size: 0.96rem;
+  }}
   .scenario-caption {{
     white-space: normal;
   }}
@@ -3326,6 +3614,29 @@ button[kind="primary"] {{
   }}
 }}
 @media (max-width: 640px) {{
+  .schedule-calendar-cell {{
+    min-height: 68px;
+    padding: 0.28rem 0.18rem;
+  }}
+  .schedule-calendar-weekday {{
+    padding: 0.34rem 0.1rem;
+    font-size: 0.68rem;
+  }}
+  .schedule-calendar-day-number {{
+    font-size: 0.7rem;
+  }}
+  .schedule-calendar-opponent {{
+    margin-top: 0.18rem;
+    font-size: 0.58rem;
+  }}
+  .schedule-calendar-probability {{
+    right: 0.16rem;
+    bottom: 0.2rem;
+    font-size: 0.82rem;
+  }}
+  .schedule-calendar-heading span {{
+    font-size: 0.64rem;
+  }}
   .block-container {{
     padding-left: 0.48rem;
     padding-right: 0.48rem;
