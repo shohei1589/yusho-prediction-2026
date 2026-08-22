@@ -2299,7 +2299,7 @@ def _render_schedule_calendar(
         current_month = default_month
     current_month = min(max(current_month, minimum_month), maximum_month)
 
-    navigation = st.columns([1, 4, 1])
+    navigation = st.columns([0.45, 6, 0.45], gap="small")
     with navigation[0]:
         if st.button(
             "‹",
@@ -2312,6 +2312,7 @@ def _render_schedule_calendar(
             st.rerun()
     with navigation[1]:
         st.markdown(
+            "<span class='schedule-calendar-nav-marker'></span>"
             f"<div class='schedule-calendar-title'>{current_month.year}年{current_month.month}月</div>",
             unsafe_allow_html=True,
         )
@@ -3097,6 +3098,9 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.magic-matrix-date) > div {{
   font-weight: 900;
   text-align: center;
 }}
+.schedule-calendar-nav-marker {{
+  display: none;
+}}
 .schedule-calendar-heading {{
   display: flex;
   align-items: center;
@@ -3694,9 +3698,37 @@ button[kind="primary"] {{
   }}
 }}
 @media (max-width: 640px) {{
+  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-nav-marker) {{
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    gap: 0.25rem !important;
+  }}
+  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-nav-marker) > div[data-testid="column"] {{
+    min-width: 0 !important;
+  }}
+  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-nav-marker) > div[data-testid="column"]:first-child,
+  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-nav-marker) > div[data-testid="column"]:last-child {{
+    flex: 0 0 34px !important;
+    width: 34px !important;
+  }}
+  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-nav-marker) > div[data-testid="column"]:nth-child(2) {{
+    flex: 1 1 auto !important;
+    width: auto !important;
+  }}
+  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-nav-marker) button {{
+    min-height: 30px !important;
+    padding: 0 !important;
+    font-size: 0.9rem !important;
+  }}
+  .schedule-calendar-title {{
+    min-height: 34px;
+    font-size: 1.08rem;
+  }}
   .schedule-calendar-cell {{
-    min-height: 68px;
-    padding: 0.28rem 0.18rem;
+    min-height: 82px;
+    padding: 0.28rem 0.16rem 1.35rem;
   }}
   .schedule-calendar-weekday {{
     padding: 0.34rem 0.1rem;
@@ -3707,7 +3739,18 @@ button[kind="primary"] {{
   }}
   .schedule-calendar-opponent {{
     margin-top: 0.18rem;
-    font-size: 0.58rem;
+    max-height: 3.35em;
+    overflow: hidden;
+    font-size: 0.56rem;
+    line-height: 1.1;
+  }}
+  .schedule-calendar-team,
+  .schedule-calendar-venue {{
+    overflow: visible;
+    white-space: normal;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }}
   .schedule-calendar-venue {{
     margin-top: 0.12rem;
