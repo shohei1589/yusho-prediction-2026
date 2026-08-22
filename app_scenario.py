@@ -3698,26 +3698,30 @@ button[kind="primary"] {{
   }}
 }}
 @media (max-width: 640px) {{
-  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-nav-marker) {{
+  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-title) {{
     display: flex !important;
     flex-direction: row !important;
     flex-wrap: nowrap !important;
     align-items: center !important;
     gap: 0.25rem !important;
   }}
-  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-nav-marker) > div[data-testid="column"] {{
+  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-title) > div[data-testid="column"],
+  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-title) > div[data-testid="stColumn"] {{
     min-width: 0 !important;
   }}
-  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-nav-marker) > div[data-testid="column"]:first-child,
-  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-nav-marker) > div[data-testid="column"]:last-child {{
+  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-title) > div[data-testid="column"]:first-child,
+  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-title) > div[data-testid="column"]:last-child,
+  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-title) > div[data-testid="stColumn"]:first-child,
+  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-title) > div[data-testid="stColumn"]:last-child {{
     flex: 0 0 34px !important;
     width: 34px !important;
   }}
-  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-nav-marker) > div[data-testid="column"]:nth-child(2) {{
+  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-title) > div[data-testid="column"]:nth-child(2),
+  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-title) > div[data-testid="stColumn"]:nth-child(2) {{
     flex: 1 1 auto !important;
     width: auto !important;
   }}
-  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-nav-marker) button {{
+  div[data-testid="stHorizontalBlock"]:has(.schedule-calendar-title) button {{
     min-height: 30px !important;
     padding: 0 !important;
     font-size: 0.9rem !important;
