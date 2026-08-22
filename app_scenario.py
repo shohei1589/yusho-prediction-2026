@@ -2181,6 +2181,23 @@ def _needed_wins_display(value: object) -> str:
     return "確定済み" if wins == 0 else f"+{wins}勝"
 
 
+def _calendar_start_time_label(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        return ""
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "<na>", "nat"}:
+        return ""
+    parts = text.split(":")
+    if len(parts) >= 2 and all(part.isdigit() for part in parts[:2]):
+        return f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+    return text
+
+
 def _render_schedule_calendar(
     champion_dates: pd.DataFrame,
     schedule: pd.DataFrame,
@@ -2234,6 +2251,15 @@ def _render_schedule_calendar(
                 venue_label = str(venue_value).strip()
                 if venue_label.lower() in {"nan", "<na>"}:
                     venue_label = ""
+                start_time_label = _calendar_start_time_label(
+                    getattr(row, "StartTime", "")
+                )
+                if start_time_label:
+                    venue_label = (
+                        f"{venue_label}（{start_time_label}）"
+                        if venue_label
+                        else f"（{start_time_label}）"
+                    )
                 if bool(getattr(row, "IsMakeup", False)):
                     opponent_label = f"振替: {opponent_label}"
                 opponent_item = (opponent_label, venue_label)
