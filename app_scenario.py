@@ -2224,6 +2224,12 @@ def _render_schedule_calendar(
             for row in group.itertuples(index=False):
                 opponent = row.AwayTeam if row.HomeTeam == target_team else row.HomeTeam
                 opponent_label = _schedule_team_label(opponent)
+                venue_value = getattr(row, "Venue", "")
+                if pd.isna(venue_value):
+                    venue_value = ""
+                venue_label = str(venue_value).strip()
+                if venue_label and venue_label.lower() not in {"nan", "<na>"}:
+                    opponent_label = f"{opponent_label}@{venue_label}"
                 if bool(getattr(row, "IsMakeup", False)):
                     opponent_label = f"振替: {opponent_label}"
                 if opponent_label not in opponents:
@@ -2239,7 +2245,10 @@ def _render_schedule_calendar(
     maximum_date = max(date_values)
     minimum_month = minimum_date.to_period("M")
     maximum_month = maximum_date.to_period("M")
-    month_key = f"schedule_calendar_month_{year}_{league}_{target_team}"
+    month_key = (
+        f"schedule_calendar_month_{year}_{league}_{target_team}_"
+        f"{start_date.isoformat()}"
+    )
     default_month = pd.Timestamp(start_date).to_period("M")
     if default_month < minimum_month:
         default_month = minimum_month
