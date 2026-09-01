@@ -421,20 +421,25 @@ def _consume_entered_start_date_games(
                 home = str(game["HomeTeam"])
                 away = str(game["AwayTeam"])
                 opponent = away if home == target_team else home
-                opponent_result = _opposite_result(repeated_result)
-                previous = expected_opponent_deltas.get(opponent, (0, 0, 0))
-                expected_opponent_deltas[opponent] = _add_result_delta(
-                    previous,
-                    opponent_result,
-                )
-                consumed_indices.append(index)
                 home_result = (
                     repeated_result
                     if home == target_team
                     else _opposite_result(repeated_result)
                 )
+                consumed_indices.append(index)
                 consumed_games.append(
                     (game["Date"], home, away, home_result)
+                )
+                # A farm district standings frame does not contain teams from
+                # other districts. The target game is still consumed, but its
+                # external opponent must not be added to that frame.
+                if opponent not in base_by_team or opponent not in entered_by_team:
+                    continue
+                opponent_result = _opposite_result(repeated_result)
+                previous = expected_opponent_deltas.get(opponent, (0, 0, 0))
+                expected_opponent_deltas[opponent] = _add_result_delta(
+                    previous,
+                    opponent_result,
                 )
 
             missing_opponent_deltas: dict[str, tuple[int, int, int]] = {}
