@@ -1914,13 +1914,16 @@ def _show_champion_date_chart_dialog(figure: object, chart_key: str) -> None:
 
 
 def _collapse_champion_date_rows(frame: pd.DataFrame) -> pd.DataFrame:
-    regular = frame[frame["DateLabel"] == ""]
-    labeled = frame[frame["DateLabel"] != ""]
+    # Farm schedule rows carry a display label for ordinary dates too. Only
+    # makeup labels should remain separate from the regular calendar axis.
+    makeup_mask = frame["DateLabel"].map(_is_makeup_label)
+    regular = frame[~makeup_mask].copy()
+    labeled = frame[makeup_mask].copy()
     frames: list[pd.DataFrame] = []
     if not regular.empty:
-        frames.append(
-            regular.groupby(["Date", "DateLabel"], as_index=False)["Probability"].sum()
-        )
+        regular = regular.groupby("Date", as_index=False)["Probability"].sum()
+        regular["DateLabel"] = ""
+        frames.append(regular.loc[:, ["Date", "DateLabel", "Probability"]])
     if not labeled.empty:
         frames.append(
             labeled.groupby("DateLabel", as_index=False)
