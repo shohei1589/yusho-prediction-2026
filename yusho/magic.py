@@ -32,6 +32,7 @@ class MagicScenarioAnalysis:
     timeline: pd.DataFrame
     first_lit_date: pd.Timestamp | None
     first_clinch_date: pd.Timestamp | None
+    theoretical_clinch_date: pd.Timestamp | None
     magic_number: int | None
 
 
@@ -86,6 +87,14 @@ def analyze_magic_scenario(
     )
     first_lit_date = _first_timeline_date(timeline, "IsLit")
     first_clinch_date = _first_timeline_date(timeline, "IsClinched")
+    theoretical_clinch_date = _theoretical_clinch_date(
+        base_records,
+        frame,
+        normalized_results,
+        teams,
+        target_team,
+        official_schedule,
+    )
     # The summary must show the magic number for the currently applied input,
     # not the number recorded on the first day that the timeline became lit.
     magic_number = _overall_required_wins(condition_table) if is_lit else None
@@ -109,6 +118,7 @@ def analyze_magic_scenario(
         timeline=timeline,
         first_lit_date=first_lit_date,
         first_clinch_date=first_clinch_date,
+        theoretical_clinch_date=theoretical_clinch_date,
         magic_number=magic_number,
     )
 
@@ -452,6 +462,197 @@ def _first_timeline_date(frame: pd.DataFrame, column: str) -> pd.Timestamp | Non
         return None
     dates = frame.loc[frame[column].fillna(False).astype(bool), "Date"].dropna()
     return pd.Timestamp(dates.min()) if not dates.empty else None
+
+
+def _theoretical_clinch_date(
+    base_records: dict[str, dict[str, int]],
+    schedule: pd.DataFrame,
+    results: dict[str, str],
+    teams: tuple[str, ...],
+    target_team: str,
+    official_schedule: pd.DataFrame | None,
+) -> pd.Timestamp | None:
+    """Find the earliest date possible under a target-favorable outcome path.
+
+    Unknown target games are treated as target wins. Unknown games between
+    rivals are assigned through a loss-allocation check, so one game cannot be
+    counted as a loss for both teams.
+    """
+    frame = _prepare_schedule(schedule)
+    dated_frame = frame.dropna(subset=["Date"])
+    if dated_frame.empty:
+        return None
+
+    normalized_results = {
+        str(key): _normalize_game_result(value)
+        for key, value in results.items()
+    }
+    for game_date in dated_frame["Date"].drop_duplicates().sort_values():
+        if _theoretical_clinch_possible_on_date(
+            base_records,
+            dated_frame,
+            normalized_results,
+            teams,
+            target_team,
+            official_schedule,
+            pd.Timestamp(game_date),
+        ):
+            return pd.Timestamp(game_date)
+    return None
+
+
+def _theoretical_clinch_possible_on_date(
+    base_records: dict[str, dict[str, int]],
+    schedule: pd.DataFrame,
+    results: dict[str, str],
+    teams: tuple[str, ...],
+    target_team: str,
+    official_schedule: pd.DataFrame | None,
+    target_date: pd.Timestamp,
+) -> bool:
+    past = schedule[schedule["Date"] <= target_date]
+    future = schedule[schedule["Date"] > target_date]
+    records = deepcopy(base_records)
+    hypothetical_results: dict[str, str] = {}
+    unresolved_rival_games: list[tuple[str, str]] = []
+
+    for row in past.itertuples(index=False):
+        home = str(row.HomeTeam)
+        away = str(row.AwayTeam)
+        game_key = str(row.GameKey)
+        result = results.get(game_key, "未入力")
+        if result == "未入力":
+            if target_team in {home, away}:
+                result = "ホーム勝" if home == target_team else "ビジター勝"
+            elif home in teams and away in teams:
+                unresolved_rival_games.append((home, away))
+                continue
+            elif home in teams or away in teams:
+                # An external opponent is not a title contender in this
+                # analysis, so give the in-league team the unfavorable result.
+                result = "ビジター勝" if home in teams else "ホーム勝"
+            else:
+                continue
+        hypothetical_results[game_key] = result
+        _apply_game_result(records, home, away, result)
+
+    direct_records = _head_to_head_records(
+        official_schedule,
+        schedule,
+        hypothetical_results,
+        teams,
+        target_team,
+        cutoff=target_date,
+    )
+    target = records[target_team]
+    target_remaining = _team_remaining(future, target_team)
+    target_min_rate = _win_rate(
+        target["Wins"],
+        target["Losses"] + target_remaining,
+    )
+    loss_demands: dict[str, int] = {}
+
+    for rival in teams:
+        if rival == target_team:
+            continue
+        rival_record = records[rival]
+        rival_remaining = _team_remaining(future, rival)
+        direct_remaining = _direct_remaining(future, target_team, rival)
+        unknown_games = sum(rival in game for game in unresolved_rival_games)
+        required_losses: int | None = None
+
+        for extra_losses in range(unknown_games + 1):
+            possible_rival_wins = rival_record["Wins"] + unknown_games - extra_losses
+            possible_rival_losses = rival_record["Losses"] + extra_losses
+            rival_max_rate = _win_rate(
+                possible_rival_wins + rival_remaining,
+                possible_rival_losses,
+            )
+            if _ranking_condition_holds(
+                target_min_rate,
+                rival_max_rate,
+                direct_records.get(rival),
+                direct_remaining,
+            ):
+                required_losses = extra_losses
+                break
+
+        if required_losses is None:
+            return False
+        loss_demands[rival] = required_losses
+
+    return _can_assign_rival_losses(unresolved_rival_games, loss_demands)
+
+
+def _can_assign_rival_losses(
+    games: list[tuple[str, str]],
+    loss_demands: dict[str, int],
+) -> bool:
+    """Check whether each rival can receive its required losses from games."""
+    total_demand = sum(loss_demands.values())
+    if total_demand == 0:
+        return True
+    if total_demand > len(games):
+        return False
+
+    teams = tuple(loss_demands)
+    source = 0
+    game_start = 1
+    team_start = game_start + len(games)
+    sink = team_start + len(teams)
+    node_count = sink + 1
+    capacity = [[0] * node_count for _ in range(node_count)]
+    graph: list[list[int]] = [[] for _ in range(node_count)]
+
+    def add_edge(start: int, end: int, value: int) -> None:
+        if end not in graph[start]:
+            graph[start].append(end)
+            graph[end].append(start)
+        capacity[start][end] += value
+
+    team_nodes = {
+        team: team_start + index
+        for index, team in enumerate(teams)
+    }
+    for index, (home, away) in enumerate(games):
+        game_node = game_start + index
+        add_edge(source, game_node, 1)
+        add_edge(game_node, team_nodes[home], 1)
+        add_edge(game_node, team_nodes[away], 1)
+    for team, demand in loss_demands.items():
+        add_edge(team_nodes[team], sink, demand)
+
+    flow = 0
+    while flow < total_demand:
+        parent = [-1] * node_count
+        parent[source] = source
+        queue = [source]
+        cursor = 0
+        while cursor < len(queue) and parent[sink] == -1:
+            node = queue[cursor]
+            cursor += 1
+            for neighbor in graph[node]:
+                if parent[neighbor] == -1 and capacity[node][neighbor] > 0:
+                    parent[neighbor] = node
+                    queue.append(neighbor)
+                    if neighbor == sink:
+                        break
+        if parent[sink] == -1:
+            break
+        path_flow = total_demand - flow
+        node = sink
+        while node != source:
+            previous = parent[node]
+            path_flow = min(path_flow, capacity[previous][node])
+            node = previous
+        node = sink
+        while node != source:
+            previous = parent[node]
+            capacity[previous][node] -= path_flow
+            capacity[node][previous] += path_flow
+            node = previous
+        flow += path_flow
+    return flow == total_demand
 
 
 def _timeline_value(

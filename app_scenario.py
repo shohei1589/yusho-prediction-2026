@@ -747,6 +747,7 @@ def _render_summary(
 - マジック数は、各ライバル球団が残り試合を全勝すると仮定し、対象球団が最終勝率でそれを上回るために必要な追加勝利数の最大値です。勝率が同率の場合は直接対戦成績で判定します。
 - 勝率が同率になる場合は、残りの直接対決を対象球団の敗戦としても、公式の過去結果と入力済み結果を合算した直接対戦成績が対象球団優位であれば条件クリアと判定します。
 - 優勝確定日は、各日終了時点で「対象チームの残り試合を含めた最低勝率」が「他チームの残り試合を含めた最高勝率」を上回る最初の日として判定しています。
+- 理論上の最短優勝日は、入力済み結果を固定し、未入力の対象チーム戦を全勝、ライバル同士の未入力試合は1試合につき片方だけが敗戦する最も有利な結果を仮定した場合に、優勝条件が成立する最初の日です。
 """
         )
 
@@ -1730,13 +1731,13 @@ def _render_magic_scenario_result_applied(
     magic_number = scenario.magic_number
     magic_display = "—" if magic_number is None or not scenario.is_lit else f"M{magic_number}"
     metric_cols[0].metric("マジック数", magic_display)
-    clinch_date = scenario.first_clinch_date
+    clinch_date = scenario.theoretical_clinch_date
     clinch_date_display = (
         clinch_date.strftime("%Y-%m-%d")
         if clinch_date is not None
         else "—"
     )
-    metric_cols[0].metric("最短優勝日", clinch_date_display)
+    metric_cols[0].metric("理論上の最短優勝日", clinch_date_display)
     if st.button(
         "結果入力をリセット",
         key=f"magic_game_reset_button_{year}_{league}_{target_team}",
