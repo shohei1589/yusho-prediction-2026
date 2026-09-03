@@ -1730,6 +1730,13 @@ def _render_magic_scenario_result_applied(
     magic_number = scenario.magic_number
     magic_display = "—" if magic_number is None or not scenario.is_lit else f"M{magic_number}"
     metric_cols[0].metric("マジック数", magic_display)
+    clinch_date = scenario.first_clinch_date
+    clinch_date_display = (
+        clinch_date.strftime("%Y-%m-%d")
+        if clinch_date is not None
+        else "—"
+    )
+    metric_cols[0].metric("最短優勝日", clinch_date_display)
     if st.button(
         "結果入力をリセット",
         key=f"magic_game_reset_button_{year}_{league}_{target_team}",
