@@ -381,27 +381,21 @@ def _consume_entered_start_date_games(
 
     The editor starts from standings immediately before ``start_date``. If a
     user enters a result for a game on or after the base date, keeping that
-    game in the simulation would count it twice. A repeated result such as +2
-    wins is assigned to the target team's games in chronological order.
+    game in the simulation would count it twice. Entered deltas for every team
+    are matched to the fetched fixtures in chronological order.
 
     Farm cancellations are not rescheduled in this model. When a user adds a
     tie to represent one of those cancellations, bind it to the latest past
-    canceled target game before considering future fixtures.
+    canceled game before considering future fixtures.
     """
-    if "Date" not in schedule.columns:
+    if "Date" not in schedule.columns or "Status" not in schedule.columns:
         return scenario_standings, schedule, []
 
     candidates = schedule[
         schedule["Status"].isin(["final", "scheduled", "in_progress"])
-        & (
-            (schedule["HomeTeam"] == target_team)
-            | (schedule["AwayTeam"] == target_team)
-        )
     ].copy()
     candidates["_sort_date"] = pd.to_datetime(candidates["Date"], errors="coerce")
     candidates = candidates.sort_values(["_sort_date", "HomeTeam", "AwayTeam"])
-    if candidates.empty:
-        return scenario_standings, schedule, []
 
     base_by_team = {
         str(row.Team): (int(row.Wins), int(row.Losses), int(row.Ties))
@@ -415,126 +409,118 @@ def _consume_entered_start_date_games(
     consumed_indices: list[object] = []
     consumed_games: list[tuple[object, str, str, str]] = []
     expected_opponent_deltas: dict[str, tuple[int, int, int]] = {}
+    pending = _entered_result_counts(base_by_team, entered_by_team)
+    if not pending:
+        return scenario_standings, schedule, []
 
-    target_delta = _standing_delta(
-        base_by_team[target_team],
-        entered_by_team[target_team],
-    )
-    repeated_result = _repeated_game_result(target_delta)
-    if repeated_result is not None:
-        game_count = sum(target_delta)
-        if (
-            repeated_result == "Tie"
-            and league is not None
-            and is_farm_league(league)
-            and full_schedule is not None
-        ):
-            canceled = _past_canceled_target_games(
-                full_schedule,
-                target_team,
-                start_date,
-            )
-            canceled_count = min(game_count, len(canceled))
-            for _, game in canceled.head(canceled_count).iterrows():
-                home = str(game["HomeTeam"])
-                away = str(game["AwayTeam"])
-                opponent = away if home == target_team else home
-                home_result = (
-                    repeated_result
-                    if home == target_team
-                    else _opposite_result(repeated_result)
-                )
-                consumed_games.append((game["Date"], home, away, home_result))
-                _record_opponent_delta(
-                    expected_opponent_deltas,
-                    opponent,
-                    _opposite_result(repeated_result),
-                )
-            game_count -= canceled_count
-
-        if game_count > len(candidates):
-            return scenario_standings, schedule, []
-
-        selected = candidates.head(game_count)
-        for index, game in selected.iterrows():
+    # A farm cancellation has no row in the remaining schedule. Consume the
+    # latest matching tie first so it does not consume a future fixture.
+    if (
+        league is not None
+        and is_farm_league(league)
+        and full_schedule is not None
+    ):
+        canceled = _past_canceled_games(full_schedule, start_date)
+        for _, game in canceled.iterrows():
             home = str(game["HomeTeam"])
             away = str(game["AwayTeam"])
-            opponent = away if home == target_team else home
-            home_result = (
-                repeated_result
-                if home == target_team
-                else _opposite_result(repeated_result)
-            )
-            consumed_indices.append(index)
-            consumed_games.append(
-                (game["Date"], home, away, home_result)
-            )
-            _record_opponent_delta(
-                expected_opponent_deltas,
-                opponent,
-                _opposite_result(repeated_result),
-            )
-
-        missing_opponent_deltas: dict[str, tuple[int, int, int]] = {}
-        for opponent, expected_delta in expected_opponent_deltas.items():
-            if opponent not in base_by_team or opponent not in entered_by_team:
-                # A farm district standings frame does not contain teams from
-                # other districts, so external opponents are not adjusted.
+            home_options = _pending_options(pending, home)
+            away_options = _pending_options(pending, away)
+            if home_options and away_options:
+                if "Tie" not in home_options or "Tie" not in away_options:
+                    continue
+            elif home_options:
+                if "Tie" not in home_options:
+                    continue
+            elif away_options:
+                if "Tie" not in away_options:
+                    continue
+            else:
                 continue
-            actual_delta = _standing_delta(
-                base_by_team[opponent],
-                entered_by_team[opponent],
+            _consume_scenario_game(
+                game,
+                "Tie",
+                pending,
+                expected_opponent_deltas,
+                base_by_team,
+                consumed_indices=None,
+                consumed_games=consumed_games,
             )
-            missing_delta = _missing_result_delta(actual_delta, expected_delta)
-            if missing_delta is None:
-                return scenario_standings, schedule, []
-            missing_opponent_deltas[opponent] = missing_delta
 
-        for opponent, missing_delta in missing_opponent_deltas.items():
-            _add_standing_delta(adjusted, opponent, missing_delta)
-
-        remaining = schedule.drop(index=consumed_indices).reset_index(drop=True)
-        return adjusted, remaining, consumed_games
-
+    # First consume games where both sides were entered. This prevents a
+    # result entered for another game by the opponent from being mistaken for
+    # the result of the first game in the schedule.
     for index, game in candidates.iterrows():
-        if pd.to_datetime(game["Date"], errors="coerce").date() != start_date:
-            break
-        home = str(game["HomeTeam"])
-        away = str(game["AwayTeam"])
-        if home not in base_by_team or away not in base_by_team:
+        if index in consumed_indices:
             continue
-
-        home_delta = _standing_delta(base_by_team[home], entered_by_team[home])
-        away_delta = _standing_delta(base_by_team[away], entered_by_team[away])
-        result = _matching_game_result(home_delta, away_delta)
-        if result is None and target_team in {home, away}:
-            target_delta = home_delta if target_team == home else away_delta
-            if _is_single_game_delta(target_delta):
-                target_result = _delta_to_result(target_delta)
-                result = target_result if target_team == home else _opposite_result(target_result)
-                _complete_opponent_result(
-                    adjusted,
-                    away if target_team == home else home,
-                    target_result,
-                )
+        result = _matching_pending_result(
+            str(game["HomeTeam"]),
+            str(game["AwayTeam"]),
+            pending,
+        )
         if result is None:
             continue
+        _consume_scenario_game(
+            game,
+            result,
+            pending,
+            expected_opponent_deltas,
+            base_by_team,
+            consumed_indices=consumed_indices,
+            consumed_games=consumed_games,
+            index=index,
+        )
 
-        consumed_indices.append(index)
-        consumed_games.append((game["Date"], home, away, result))
+    # Then consume one-sided entries and complete the opponent automatically.
+    for index, game in candidates.iterrows():
+        if index in consumed_indices:
+            continue
+        result = _single_pending_result(
+            str(game["HomeTeam"]),
+            str(game["AwayTeam"]),
+            pending,
+        )
+        if result is None:
+            continue
+        _consume_scenario_game(
+            game,
+            result,
+            pending,
+            expected_opponent_deltas,
+            base_by_team,
+            consumed_indices=consumed_indices,
+            consumed_games=consumed_games,
+            index=index,
+        )
 
-    if not consumed_indices:
+    if any(
+        count > 0
+        for counts in pending.values()
+        for count in counts.values()
+    ):
+        # Do not partially remove games when the aggregate input cannot be
+        # matched to the fetched schedule. This avoids a half-applied result.
+        return scenario_standings, schedule, []
+
+    for opponent, missing_delta in expected_opponent_deltas.items():
+        if opponent in base_by_team and opponent in entered_by_team:
+            _add_standing_delta(adjusted, opponent, missing_delta)
+
+    if not consumed_games:
         return scenario_standings, schedule, []
     remaining = schedule.drop(index=consumed_indices).reset_index(drop=True)
     return adjusted, remaining, consumed_games
 
 
-def _past_canceled_target_games(
+def _past_canceled_games(
     full_schedule: pd.DataFrame,
-    target_team: str,
     start_date: date,
 ) -> pd.DataFrame:
-    if full_schedule.empty or "Date" not in full_schedule.columns:
+    if (
+        full_schedule.empty
+        or "Date" not in full_schedule.columns
+        or "Status" not in full_schedule.columns
+    ):
         return full_schedule.iloc[0:0].copy()
     frame = full_schedule.copy()
     frame["_sort_date"] = pd.to_datetime(frame["Date"], errors="coerce")
@@ -542,16 +528,103 @@ def _past_canceled_target_games(
         frame["_sort_date"].notna()
         & (frame["_sort_date"] < pd.Timestamp(start_date))
         & frame["Status"].eq("canceled")
-        & (
-            (frame["HomeTeam"] == target_team)
-            | (frame["AwayTeam"] == target_team)
-        )
     ]
-    # Aggregate standings input has no date, so the latest cancellation is
-    # the least surprising match for a newly entered tie.
     return frame.sort_values(
         ["_sort_date", "HomeTeam", "AwayTeam"],
         ascending=[False, True, True],
+    )
+
+
+def _entered_result_counts(
+    base_by_team: dict[str, tuple[int, int, int]],
+    entered_by_team: dict[str, tuple[int, int, int]],
+) -> dict[str, dict[str, int]]:
+    counts: dict[str, dict[str, int]] = {}
+    for team, base in base_by_team.items():
+        if team not in entered_by_team:
+            continue
+        delta = _standing_delta(base, entered_by_team[team])
+        if any(value < 0 for value in delta):
+            continue
+        team_counts = {
+            "Win": delta[0],
+            "Lose": delta[1],
+            "Tie": delta[2],
+        }
+        if any(value > 0 for value in team_counts.values()):
+            counts[team] = team_counts
+    return counts
+
+
+def _pending_options(
+    pending: dict[str, dict[str, int]],
+    team: str,
+) -> tuple[str, ...]:
+    counts = pending.get(team, {})
+    return tuple(
+        result
+        for result in ("Win", "Lose", "Tie")
+        if counts.get(result, 0) > 0
+    )
+
+
+def _matching_pending_result(
+    home: str,
+    away: str,
+    pending: dict[str, dict[str, int]],
+) -> str | None:
+    home_options = _pending_options(pending, home)
+    away_options = _pending_options(pending, away)
+    if not home_options or not away_options:
+        return None
+    for result in home_options:
+        if _opposite_result(result) in away_options:
+            return result
+    return None
+
+
+def _single_pending_result(
+    home: str,
+    away: str,
+    pending: dict[str, dict[str, int]],
+) -> str | None:
+    home_options = _pending_options(pending, home)
+    away_options = _pending_options(pending, away)
+    if home_options and away_options:
+        return None
+    if home_options:
+        return home_options[0]
+    if away_options:
+        return _opposite_result(away_options[0])
+    return None
+
+
+def _consume_scenario_game(
+    game: object,
+    home_result: str,
+    pending: dict[str, dict[str, int]],
+    expected_opponent_deltas: dict[str, tuple[int, int, int]],
+    base_by_team: dict[str, tuple[int, int, int]],
+    consumed_indices: list[object] | None,
+    consumed_games: list[tuple[object, str, str, str]],
+    index: object | None = None,
+) -> None:
+    home = str(game["HomeTeam"])
+    away = str(game["AwayTeam"])
+    results = {
+        home: home_result,
+        away: _opposite_result(home_result),
+    }
+    for team, result in results.items():
+        counts = pending.get(team)
+        if counts is not None and counts.get(result, 0) > 0:
+            counts[result] -= 1
+        elif team in base_by_team:
+            _record_opponent_delta(expected_opponent_deltas, team, result)
+    if consumed_indices is not None and index is not None:
+        consumed_indices.append(index)
+    consumed_games.append(
+        (game["Date"], home, away, home_result)
     )
 
 
