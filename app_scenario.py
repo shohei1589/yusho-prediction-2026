@@ -413,8 +413,66 @@ def _consume_entered_start_date_games(
     if not pending:
         return scenario_standings, schedule, []
 
-    # A farm cancellation has no row in the remaining schedule. Consume the
-    # latest matching tie first so it does not consume a future fixture.
+    def consume_scheduled_candidates(candidate_frame: pd.DataFrame) -> None:
+        # First consume games where both sides were entered. This prevents a
+        # result entered for another game by the opponent from being mistaken
+        # for the first game in the schedule.
+        for index, game in candidate_frame.iterrows():
+            if index in consumed_indices:
+                continue
+            result = _matching_pending_result(
+                str(game["HomeTeam"]),
+                str(game["AwayTeam"]),
+                pending,
+            )
+            if result is None:
+                continue
+            _consume_scenario_game(
+                game,
+                result,
+                pending,
+                expected_opponent_deltas,
+                base_by_team,
+                consumed_indices=consumed_indices,
+                consumed_games=consumed_games,
+                index=index,
+            )
+
+        # Then consume one-sided entries and complete the opponent
+        # automatically.
+        for index, game in candidate_frame.iterrows():
+            if index in consumed_indices:
+                continue
+            result = _single_pending_result(
+                str(game["HomeTeam"]),
+                str(game["AwayTeam"]),
+                pending,
+            )
+            if result is None:
+                continue
+            _consume_scenario_game(
+                game,
+                result,
+                pending,
+                expected_opponent_deltas,
+                base_by_team,
+                consumed_indices=consumed_indices,
+                consumed_games=consumed_games,
+                index=index,
+            )
+
+    # A result entered on the base date represents that day's game. Consume
+    # those fixtures before considering older farm cancellations. Officially
+    # completed/in-progress fixtures also take priority over cancellations.
+    preferred_candidates = candidates[
+        candidates["_sort_date"].eq(pd.Timestamp(start_date))
+        | candidates["Status"].isin(["final", "in_progress"])
+    ]
+    consume_scheduled_candidates(preferred_candidates)
+
+    # A farm cancellation has no row in the remaining schedule. Consume a
+    # latest matching tie only after base-date and official-result fixtures
+    # have been matched, so a current tie is not mistaken for an old cancel.
     if (
         league is not None
         and is_farm_league(league)
@@ -447,51 +505,9 @@ def _consume_entered_start_date_games(
                 consumed_games=consumed_games,
             )
 
-    # First consume games where both sides were entered. This prevents a
-    # result entered for another game by the opponent from being mistaken for
-    # the result of the first game in the schedule.
-    for index, game in candidates.iterrows():
-        if index in consumed_indices:
-            continue
-        result = _matching_pending_result(
-            str(game["HomeTeam"]),
-            str(game["AwayTeam"]),
-            pending,
-        )
-        if result is None:
-            continue
-        _consume_scenario_game(
-            game,
-            result,
-            pending,
-            expected_opponent_deltas,
-            base_by_team,
-            consumed_indices=consumed_indices,
-            consumed_games=consumed_games,
-            index=index,
-        )
-
-    # Then consume one-sided entries and complete the opponent automatically.
-    for index, game in candidates.iterrows():
-        if index in consumed_indices:
-            continue
-        result = _single_pending_result(
-            str(game["HomeTeam"]),
-            str(game["AwayTeam"]),
-            pending,
-        )
-        if result is None:
-            continue
-        _consume_scenario_game(
-            game,
-            result,
-            pending,
-            expected_opponent_deltas,
-            base_by_team,
-            consumed_indices=consumed_indices,
-            consumed_games=consumed_games,
-            index=index,
-        )
+    consume_scheduled_candidates(
+        candidates.loc[~candidates.index.isin(consumed_indices)]
+    )
 
     if any(
         count > 0
