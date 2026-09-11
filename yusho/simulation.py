@@ -182,6 +182,8 @@ def simulate_season(
                 standings[team]["Wins"] += 1
             elif result == "Lose":
                 standings[team]["Losses"] += 1
+            elif result == "Tie":
+                standings[team]["Ties"] += 1
 
         if champion_date is None and _is_championship_decided(
             standings, total_games, teams, target_team
