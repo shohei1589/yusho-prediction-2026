@@ -778,6 +778,12 @@ def _cached_farm_win_rates(
     return rates
 
 
+def _probability_decimal_places(simulation_count: int) -> int:
+    """Show enough percentage digits to reflect the selected trial count."""
+    digits = len(str(max(1, int(simulation_count))))
+    return max(1, digits - 3)
+
+
 def _render_summary(
     result: SimulationResult,
     standings: pd.DataFrame,
@@ -796,9 +802,13 @@ def _render_summary(
 ) -> None:
     team_name = team_label(target_team)
     probability = result.champion_probability * 100
+    probability_decimals = _probability_decimal_places(simulation_count)
 
     metric_cols = st.columns([1, 1, 1])
-    metric_cols[0].metric(f"{team_name} 優勝確率", f"{probability:.1f}%")
+    metric_cols[0].metric(
+        f"{team_name} 優勝確率",
+        f"{probability:.{probability_decimals}f}%",
+    )
     metric_cols[1].metric("対象球団の残り試合", f"{_remaining_games(schedule, target_team)}")
     metric_cols[2].metric("試行回数", f"{simulation_count:,}")
     makeup_summary = _makeup_summary(schedule)
@@ -817,6 +827,7 @@ def _render_summary(
                 target_team,
                 team_name,
                 dark_mode,
+                probability_decimals,
             )
             chart_event = st.plotly_chart(
                 champion_chart,
@@ -848,7 +859,9 @@ def _render_summary(
                 )
         with right:
             st.subheader("優勝確定日 上位")
-            _render_table(_top_dates(result.champion_dates))
+            _render_table(
+                _top_dates(result.champion_dates, probability_decimals)
+            )
             st.subheader("平均最終成績")
             _render_table(
                 _format_final_standings_table(result.final_standings),
@@ -883,6 +896,7 @@ def _render_summary(
             int(year),
             league,
             start_date,
+            probability_decimals,
         )
         _render_table(_format_schedule(schedule, target_team))
         if makeup_summary:
@@ -1938,6 +1952,7 @@ def _champion_date_chart(
     target_team: str,
     team_name: str,
     dark_mode: bool,
+    probability_decimals: int,
 ):
     frame = result.champion_dates.copy()
     if frame.empty:
@@ -1957,7 +1972,11 @@ def _champion_date_chart(
     frame["DateLabel"] = frame.apply(_chart_date_label, axis=1)
     frame["ProbabilityPct"] = frame["Probability"] * 100
     frame["ProbabilityLabel"] = frame["ProbabilityPct"].map(
-        lambda value: "無し" if float(value) <= 0 else f"{float(value):.1f}%"
+        lambda value: (
+            "無し"
+            if float(value) <= 0
+            else f"{float(value):.{probability_decimals}f}%"
+        )
     )
     category_order = frame["DateLabel"].tolist()
     positive_frame = frame[frame["ProbabilityPct"] > 0]
@@ -2028,7 +2047,7 @@ def _champion_date_chart(
         fig.add_annotation(
             x=row.DateLabel,
             y=probability_pct + max(0.25, y_max * 0.015),
-            text=f"<b>{probability_pct:.1f}%</b>",
+            text=f"<b>{probability_pct:.{probability_decimals}f}%</b>",
             showarrow=False,
             xanchor="center",
             yanchor="bottom",
@@ -2382,6 +2401,7 @@ def _render_schedule_calendar(
     year: int,
     league: str,
     start_date: date,
+    probability_decimals: int,
 ) -> None:
     """Render a month calendar combining champion-date probability and fixtures."""
     start_timestamp = pd.Timestamp(start_date).normalize()
@@ -2544,7 +2564,11 @@ def _render_schedule_calendar(
             + "</span>"
             for opponent, venue in opponents
         )
-        probability_text = "0%" if probability <= 0 else f"{probability * 100:.1f}%"
+        probability_text = (
+            "0%"
+            if probability <= 0
+            else f"{probability * 100:.{probability_decimals}f}%"
+        )
         cells.append(
             f"<div class='schedule-calendar-cell schedule-calendar-event probability-{intensity}' "
             f"style='--calendar-accent:{target_color};'>"
@@ -2560,7 +2584,7 @@ def _render_schedule_calendar(
     st.markdown(
         "<div class='schedule-calendar-card'>"
         f"<div class='schedule-calendar-heading'><strong>{escape(team_label(target_team))}</strong>"
-        f"<span>優勝確定日確率（合計） <b>{total_probability:.1f}%</b></span></div>"
+        f"<span>優勝確定日確率（合計） <b>{total_probability:.{probability_decimals}f}%</b></span></div>"
         f"<div class='schedule-calendar-weekdays'>{weekday_html}</div>"
         f"<div class='schedule-calendar-grid'>{''.join(cells)}</div>"
         "<div class='schedule-calendar-caption'>対戦相手は対象球団の残り日程、確率はシミュレーション結果です。</div>"
@@ -2612,13 +2636,18 @@ def _makeup_summary(schedule: pd.DataFrame) -> str:
     return f"<div class='makeup-note'>未確定の振替試合：<br>{lines}</div>"
 
 
-def _top_dates(champion_dates: pd.DataFrame) -> pd.DataFrame:
+def _top_dates(
+    champion_dates: pd.DataFrame,
+    probability_decimals: int,
+) -> pd.DataFrame:
     if champion_dates.empty:
         return pd.DataFrame(columns=["日付", "確率"])
     frame = champion_dates.sort_values("Probability", ascending=False).head(10).copy()
     frame["日付"] = frame.apply(_result_date_label, axis=1)
     frame = frame.dropna(subset=["日付"])
-    frame["確率"] = frame["Probability"].map(lambda value: f"{value * 100:.1f}%")
+    frame["確率"] = frame["Probability"].map(
+        lambda value: f"{value * 100:.{probability_decimals}f}%"
+    )
     return frame[["日付", "確率"]]
 
 
