@@ -827,7 +827,7 @@ def _render_summary(
                 target_team,
                 team_name,
                 dark_mode,
-                probability_decimals,
+                probability_decimals=1,
             )
             chart_event = st.plotly_chart(
                 champion_chart,
