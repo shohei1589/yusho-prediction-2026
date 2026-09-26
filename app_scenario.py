@@ -921,6 +921,8 @@ def _render_summary(
 - マジック点灯は、対象球団が残りの直接対決を全敗し、それ以外の残り試合を全勝した場合の最終勝率が、各ライバル球団の残り試合全勝時の最終勝率を上回る場合と判定します。
 - マジック数は、各ライバル球団が残り試合を全勝すると仮定し、対象球団が最終勝率でそれを上回るために必要な追加勝利数の最大値です。勝率が同率の場合は直接対戦成績で判定します。
 - 勝率が同率になる場合は、残りの直接対決を対象球団の敗戦としても、公式の過去結果と入力済み結果を合算した直接対戦成績が対象球団優位であれば条件クリアと判定します。
+- 2026年のCSファイナルステージでは、1位球団とファーストステージ勝者のレギュラーシーズンのゲーム差が10以上の場合、1位球団に2勝のアドバンテージが付与されます。
+- 「10G差マジック」は、相手球団が残り試合を全勝し、対象球団が残り試合の一部を落とす最悪条件でも、最終的に10ゲーム差以上となるための対象球団の必要勝利数です。勝利数が0の場合はすでに条件を満たし、残り試合を全勝しても届かない場合は「到達不可」と表示します。勝率5割未満による別のアドバンテージ条件は、この表示の対象外です。
 - 優勝確定日は、各日終了時点で「対象チームの残り試合を含めた最低勝率」が「他チームの残り試合を含めた最高勝率」を上回る最初の日として判定しています。
 - 理論上の最短優勝日は、入力済み結果を固定し、未入力の対象チーム戦を全勝、ライバル同士の未入力試合は1試合につき片方だけが敗戦する最も有利な結果を仮定した場合に、優勝条件が成立する最初の日です。
 """
@@ -1926,7 +1928,15 @@ def _render_magic_scenario_result_applied(
 
 
 def _format_magic_team_status_table(frame: pd.DataFrame) -> pd.DataFrame:
-    columns = ["相手球団", "マジック状況", "優勝状況", "必要勝利数"]
+    columns = [
+        "相手球団",
+        "現在ゲーム差",
+        "10G差マジック",
+        "10G差条件",
+        "マジック状況",
+        "優勝状況",
+        "必要勝利数",
+    ]
     if frame.empty:
         return pd.DataFrame(columns=columns)
 
@@ -1937,6 +1947,15 @@ def _format_magic_team_status_table(frame: pd.DataFrame) -> pd.DataFrame:
             f"font-weight:900'>{team_label(str(team))}</span>"
         )
     )
+    formatted["現在ゲーム差"] = formatted["CurrentGamesBehind"].map(
+        _signed_games_behind_display
+    )
+    formatted["10G差マジック"] = formatted["TenGameGapMagic"].map(
+        _ten_game_magic_display
+    )
+    formatted["10G差条件"] = formatted["IsTenGameGap"].map(
+        lambda value: "達成" if bool(value) else "未達"
+    )
     formatted["マジック状況"] = formatted["IsLit"].map(
         lambda value: "点灯条件クリア" if bool(value) else "未点灯"
     )
@@ -1945,6 +1964,19 @@ def _format_magic_team_status_table(frame: pd.DataFrame) -> pd.DataFrame:
     )
     formatted["必要勝利数"] = formatted["NeededWins"].map(_needed_wins_display)
     return formatted[columns]
+
+
+def _signed_games_behind_display(value: object) -> str:
+    if pd.isna(value):
+        return "—"
+    return f"{float(value):+.1f}"
+
+
+def _ten_game_magic_display(value: object) -> str:
+    if pd.isna(value):
+        return "到達不可"
+    wins = int(value)
+    return "達成" if wins == 0 else f"M{wins}"
 
 
 def _champion_date_chart(

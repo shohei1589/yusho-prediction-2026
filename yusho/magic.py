@@ -361,13 +361,23 @@ def _condition_table(
             direct_remaining,
             direct_records.get(rival),
         )
+        ten_game_magic = _ten_game_gap_magic(
+            target,
+            rival_record,
+            target_remaining,
+            rival_remaining,
+            direct_remaining,
+        )
         rows.append(
             {
                 "Team": rival,
+                "CurrentGamesBehind": _current_games_behind(target, rival_record),
                 "TargetRemaining": target_remaining,
                 "RivalRemaining": rival_remaining,
                 "DirectRemaining": direct_remaining,
                 "NeededWins": needed_wins,
+                "TenGameGapMagic": ten_game_magic,
+                "IsTenGameGap": ten_game_magic == 0,
                 "TargetScenarioRate": target_scenario_rate,
                 "RivalMaxRate": rival_max_rate,
                 "TargetMinRate": target_min_rate,
@@ -711,6 +721,49 @@ def _needed_wins_vs_rival(
             return target_wins_needed, target_rate, rival_rate
 
     return None, best_target_rate, best_rival_rate
+
+
+def _current_games_behind(
+    target: dict[str, int],
+    rival: dict[str, int],
+) -> float:
+    return (
+        (target["Wins"] - rival["Wins"])
+        + (rival["Losses"] - target["Losses"])
+    ) / 2
+
+
+def _ten_game_gap_magic(
+    target: dict[str, int],
+    rival: dict[str, int],
+    target_remaining: int,
+    rival_remaining: int,
+    direct_remaining: int,
+) -> int | None:
+    """Return target wins needed to guarantee a 10-game lead.
+
+    The target wins the requested number of its remaining games and loses the
+    rest. The rival wins every remaining game except direct games won by the
+    target. This matches the existing magic-number convention of using the
+    rival's most unfavorable outcome for the target.
+    """
+    target_non_direct_remaining = max(0, target_remaining - direct_remaining)
+    for target_wins_needed in range(target_remaining + 1):
+        forced_direct_wins = max(
+            0,
+            target_wins_needed - target_non_direct_remaining,
+        )
+        target_wins = target["Wins"] + target_wins_needed
+        target_losses = target["Losses"] + target_remaining - target_wins_needed
+        rival_wins = rival["Wins"] + rival_remaining - forced_direct_wins
+        rival_losses = rival["Losses"] + forced_direct_wins
+        games_behind = (
+            (target_wins - rival_wins)
+            + (rival_losses - target_losses)
+        ) / 2
+        if games_behind >= 10:
+            return target_wins_needed
+    return None
 
 
 def _lighting_check_vs_rival(
