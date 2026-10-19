@@ -20,7 +20,11 @@ from yusho.npb_client import (
     standings_as_of,
 )
 from yusho.magic import MagicScenarioAnalysis, analyze_magic_scenario
-from yusho.japan_series import JapanSeriesResult, calculate_japan_series
+from yusho.japan_series import (
+    JapanSeriesResult,
+    calculate_japan_series,
+    completed_japan_series_score,
+)
 from yusho.simulation import SimulationResult, run_simulations
 from yusho.teams import (
     CENTRAL,
@@ -357,6 +361,18 @@ def _cached_full_schedule(
     os.environ["NPB_VERIFY_SSL"] = "true" if verify_ssl else "false"
     os.environ["NPB_USE_ENV_PROXY"] = "true" if use_env_proxy else "false"
     return fetch_schedule(year, league=league)
+
+
+@st.cache_data(ttl=60 * 5, show_spinner=False)
+def _cached_japan_series_schedule(
+    year: int,
+    verify_ssl: bool,
+    use_env_proxy: bool,
+) -> object:
+    """Fetch official Japan Series rows so completed games can be reflected."""
+    os.environ["NPB_VERIFY_SSL"] = "true" if verify_ssl else "false"
+    os.environ["NPB_USE_ENV_PROXY"] = "true" if use_env_proxy else "false"
+    return fetch_schedule(year, start_date=date(year, 10, 24), league=PACIFIC)
 
 
 def _schedule_from_base_date(
@@ -805,22 +821,11 @@ def _render_japan_series_page() -> None:
             step=1,
             key="japan_series_year",
         )
-        pacific_teams = list(league_teams(PACIFIC))
-        central_teams = list(league_teams(CENTRAL))
-        pacific_team = st.selectbox(
-            "パ・リーグ代表",
-            pacific_teams,
-            index=pacific_teams.index("H"),
-            format_func=team_label,
-            key="japan_series_pacific_team",
-        )
-        central_team = st.selectbox(
-            "セ・リーグ代表",
-            central_teams,
-            index=central_teams.index("DB"),
-            format_func=team_label,
-            key="japan_series_central_team_v2",
-        )
+        pacific_team = "H"
+        central_team = "DB"
+        st.markdown("**出場チーム**")
+        st.caption(f"セ・リーグ代表: {team_label(central_team)}")
+        st.caption(f"パ・リーグ代表: {team_label(pacific_team)}")
         pacific_rate = st.number_input(
             "パ・リーグ代表の各試合勝率",
             min_value=0.001,
@@ -839,32 +844,6 @@ def _render_japan_series_page() -> None:
             format="%.3f",
             key="japan_series_central_rate",
         )
-        st.markdown("**現在の勝ち星**")
-        current_wins: dict[str, int] = {}
-        for team in (pacific_team, central_team):
-            wins_key = f"japan_series_current_wins_{team}"
-            st.session_state.setdefault(wins_key, 0)
-            current = int(st.session_state[wins_key])
-            current_wins[team] = current
-            star_cols = st.columns([1.55, 0.45, 0.45, 0.45])
-            with star_cols[0]:
-                st.markdown(f"**{team_label(team)}**")
-            for star_index in range(1, 4):
-                with star_cols[star_index]:
-                    star_label = "★" if current >= star_index else "☆"
-                    if st.button(
-                        star_label,
-                        key=f"{wins_key}_star_{star_index}",
-                        help=f"{team_label(team)}を{star_index}勝に設定",
-                    ):
-                        st.session_state[wins_key] = (
-                            star_index - 1
-                            if current >= star_index
-                            else star_index
-                        )
-                        st.session_state["japan_series_score_updated"] = True
-                        st.rerun()
-        st.caption("星を押すと現在の勝ち星を0〜3勝で設定できます。")
         start_date = st.date_input(
             "第1戦予定日",
             value=date(int(year), 10, 24),
@@ -876,10 +855,13 @@ def _render_japan_series_page() -> None:
             use_container_width=True,
             key="japan_series_run",
         )
-        run_clicked = run_clicked or st.session_state.pop(
-            "japan_series_score_updated",
-            False,
-        )
+        if st.button(
+            "公式結果を再取得",
+            use_container_width=True,
+            key="japan_series_refresh_official",
+        ):
+            _cached_japan_series_schedule.clear()
+            st.rerun()
         st.caption("両チームの勝率は初期値5割です。必要に応じて変更できます。")
 
     _apply_style(dark_mode)
@@ -900,6 +882,121 @@ def _render_japan_series_page() -> None:
         st.markdown("<div class='mode-control-label'>表示</div>", unsafe_allow_html=True)
         st.toggle("ダーク", value=dark_mode, key="dark_mode")
 
+    verify_ssl = os.getenv("NPB_VERIFY_SSL", "true").lower() not in {
+        "0",
+        "false",
+        "no",
+    }
+    use_env_proxy = os.getenv("NPB_USE_ENV_PROXY", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    os.environ["NPB_VERIFY_SSL"] = "true" if verify_ssl else "false"
+    os.environ["NPB_USE_ENV_PROXY"] = "true" if use_env_proxy else "false"
+
+    official_error = None
+    official_wins = {pacific_team: 0, central_team: 0}
+    official_games_played = 0
+    try:
+        official_schedule_result = _cached_japan_series_schedule(
+            int(year),
+            verify_ssl,
+            use_env_proxy,
+        )
+        official_a_wins, official_b_wins, official_games_played = (
+            completed_japan_series_score(
+                official_schedule_result.frame,
+                pacific_team,
+                central_team,
+            )
+        )
+        official_wins[pacific_team] = official_a_wins
+        official_wins[central_team] = official_b_wins
+    except Exception as exc:
+        official_error = exc
+
+    official_signature = (
+        int(year),
+        official_wins[pacific_team],
+        official_wins[central_team],
+        official_games_played,
+    )
+    official_changed = (
+        st.session_state.get("japan_series_official_signature")
+        != official_signature
+    )
+    if official_changed:
+        st.session_state[f"japan_series_current_wins_{pacific_team}"] = official_wins[
+            pacific_team
+        ]
+        st.session_state[f"japan_series_current_wins_{central_team}"] = official_wins[
+            central_team
+        ]
+        st.session_state["japan_series_official_signature"] = official_signature
+        st.session_state["japan_series_official_updated"] = True
+
+    current_wins: dict[str, int] = {}
+    for team in (pacific_team, central_team):
+        wins_key = f"japan_series_current_wins_{team}"
+        st.session_state.setdefault(wins_key, official_wins[team])
+        current_wins[team] = int(st.session_state[wins_key])
+
+    st.markdown(
+        f"""
+<div class="japan-series-score-panel">
+  <div class="japan-series-score-heading">現在の勝ち星</div>
+  <div class="japan-series-score-line">
+    <span>{team_b_name}</span>
+    <strong>{'★' * current_wins[central_team]}{'☆' * (3 - current_wins[central_team])}</strong>
+    <b>{current_wins[central_team]}勝</b>
+    <span class="japan-series-score-vs">-</span>
+    <b>{current_wins[pacific_team]}勝</b>
+    <strong>{'★' * current_wins[pacific_team]}{'☆' * (3 - current_wins[pacific_team])}</strong>
+    <span>{team_a_name}</span>
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+    for team in (central_team, pacific_team):
+        wins_key = f"japan_series_current_wins_{team}"
+        current = current_wins[team]
+        star_cols = st.columns([1.55, 0.45, 0.45, 0.45])
+        with star_cols[0]:
+            st.markdown(f"**{team_label(team)}**")
+        for star_index in range(1, 4):
+            with star_cols[star_index]:
+                star_label = "★" if current >= star_index else "☆"
+                if st.button(
+                    star_label,
+                    key=f"{wins_key}_star_{star_index}",
+                    help=f"{team_label(team)}を{star_index}勝に設定",
+                ):
+                    st.session_state[wins_key] = (
+                        star_index - 1 if current >= star_index else star_index
+                    )
+                    st.session_state["japan_series_score_updated"] = True
+                    st.rerun()
+    st.caption("星を押すと現在の勝ち星を0〜3勝で設定できます。")
+    if official_error is not None:
+        st.warning("NPB公式結果を取得できなかったため、現在の勝ち星は手動入力を使用しています。")
+    elif official_games_played:
+        st.caption(
+            f"NPB公式でfinalになった{official_games_played}試合の結果を自動反映しています。"
+        )
+    else:
+        st.caption("NPB公式でfinalになった日本シリーズの試合は、次回表示時に自動反映します。公式結果は5分間隔で更新されます。")
+
+    run_clicked = run_clicked or st.session_state.pop(
+        "japan_series_score_updated",
+        False,
+    )
+    run_clicked = run_clicked or st.session_state.pop(
+        "japan_series_official_updated",
+        False,
+    )
+
     signature = (
         int(year),
         pacific_team,
@@ -909,8 +1006,14 @@ def _render_japan_series_page() -> None:
         start_date.isoformat(),
         current_wins[pacific_team],
         current_wins[central_team],
+        max(
+            official_games_played,
+            current_wins[pacific_team] + current_wins[central_team],
+        ),
     )
-    result_key = "japan_series_exact_result"
+    # Bump the key when the schedule schema changes so an old session cannot
+    # reuse a result that lacks venue/time columns.
+    result_key = "japan_series_exact_result_v2"
     try:
         should_run = run_clicked or result_key not in st.session_state
         if should_run:
@@ -923,6 +1026,10 @@ def _render_japan_series_page() -> None:
                     team_b_win_rate=float(central_rate),
                     team_a_wins=current_wins[pacific_team],
                     team_b_wins=current_wins[central_team],
+                    games_played=max(
+                        official_games_played,
+                        current_wins[pacific_team] + current_wins[central_team],
+                    ),
                 )
             st.session_state[result_key] = {
                 "result": result,
@@ -1079,7 +1186,17 @@ def _format_japan_series_schedule(result: JapanSeriesResult) -> pd.DataFrame:
     frame = result.series_schedule.copy()
     frame["試合"] = frame["Game"].map(lambda value: f"第{int(value)}戦")
     frame["日付"] = frame["Date"].map(_japan_series_date_label)
-    return frame[["試合", "日付", "HomeSide"]].rename(columns={"HomeSide": "本拠地"})
+    frame["本拠地"] = frame["HomeTeam"].map(team_label)
+    frame["対戦カード"] = frame.apply(
+        lambda row: (
+            f"{team_label(str(row['HomeTeam']))} - "
+            f"{team_label(result.team_b if row['HomeTeam'] == result.team_a else result.team_a)}"
+        ),
+        axis=1,
+    )
+    return frame[
+        ["試合", "日付", "対戦カード", "Venue", "StartTime"]
+    ].rename(columns={"Venue": "球場", "StartTime": "開始時刻"})
 
 
 def _japan_series_date_label(value: object) -> str:
@@ -3132,6 +3249,45 @@ def _apply_style(dark_mode: bool) -> None:
   font-size: 0.95rem;
   font-weight: 600;
 }}
+.japan-series-score-panel {{
+  margin: 0.2rem 0 0.6rem;
+  padding: 0.72rem 1rem;
+  border: 2px solid {primary};
+  border-radius: 10px;
+  background: {surface};
+  box-shadow: {shadow};
+  color: {text};
+}}
+.japan-series-score-heading {{
+  color: {muted};
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-align: center;
+}}
+.japan-series-score-line {{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  margin-top: 0.2rem;
+  font-size: 1.16rem;
+  font-weight: 900;
+}}
+.japan-series-score-line strong {{
+  color: #f59e0b;
+  letter-spacing: 0.08em;
+  font-size: 1.35rem;
+  white-space: nowrap;
+}}
+.japan-series-score-line b {{
+  color: {primary};
+  font-size: 1.3rem;
+  white-space: nowrap;
+}}
+.japan-series-score-vs {{
+  color: {muted};
+  font-size: 1rem;
+}}
 .mode-control-label {{
   margin-top: 0.85rem;
   margin-bottom: 0.15rem;
@@ -4031,6 +4187,20 @@ button[kind="primary"] {{
   .app-caption {{
     font-size: 0.8rem;
     margin-bottom: 1rem;
+  }}
+  .japan-series-score-panel {{
+    padding: 0.6rem 0.45rem;
+  }}
+  .japan-series-score-line {{
+    gap: 0.28rem;
+    font-size: 0.9rem;
+  }}
+  .japan-series-score-line strong {{
+    font-size: 1.05rem;
+    letter-spacing: 0.03em;
+  }}
+  .japan-series-score-line b {{
+    font-size: 1.05rem;
   }}
   .mode-control-label {{
     margin-top: 0.1rem;
