@@ -839,6 +839,32 @@ def _render_japan_series_page() -> None:
             format="%.3f",
             key="japan_series_central_rate",
         )
+        st.markdown("**現在の勝ち星**")
+        current_wins: dict[str, int] = {}
+        for team in (pacific_team, central_team):
+            wins_key = f"japan_series_current_wins_{team}"
+            st.session_state.setdefault(wins_key, 0)
+            current = int(st.session_state[wins_key])
+            current_wins[team] = current
+            star_cols = st.columns([1.55, 0.45, 0.45, 0.45])
+            with star_cols[0]:
+                st.markdown(f"**{team_label(team)}**")
+            for star_index in range(1, 4):
+                with star_cols[star_index]:
+                    star_label = "★" if current >= star_index else "☆"
+                    if st.button(
+                        star_label,
+                        key=f"{wins_key}_star_{star_index}",
+                        help=f"{team_label(team)}を{star_index}勝に設定",
+                    ):
+                        st.session_state[wins_key] = (
+                            star_index - 1
+                            if current >= star_index
+                            else star_index
+                        )
+                        st.session_state["japan_series_score_updated"] = True
+                        st.rerun()
+        st.caption("星を押すと現在の勝ち星を0〜3勝で設定できます。")
         start_date = st.date_input(
             "第1戦予定日",
             value=date(int(year), 10, 24),
@@ -849,6 +875,10 @@ def _render_japan_series_page() -> None:
             type="primary",
             use_container_width=True,
             key="japan_series_run",
+        )
+        run_clicked = run_clicked or st.session_state.pop(
+            "japan_series_score_updated",
+            False,
         )
         st.caption("両チームの勝率は初期値5割です。必要に応じて変更できます。")
 
@@ -877,6 +907,8 @@ def _render_japan_series_page() -> None:
         round(float(pacific_rate), 3),
         round(float(central_rate), 3),
         start_date.isoformat(),
+        current_wins[pacific_team],
+        current_wins[central_team],
     )
     result_key = "japan_series_exact_result"
     try:
@@ -889,6 +921,8 @@ def _render_japan_series_page() -> None:
                     start_date,
                     team_a_win_rate=float(pacific_rate),
                     team_b_win_rate=float(central_rate),
+                    team_a_wins=current_wins[pacific_team],
+                    team_b_wins=current_wins[central_team],
                 )
             st.session_state[result_key] = {
                 "result": result,
@@ -906,6 +940,8 @@ def _render_japan_series_page() -> None:
     _render_japan_series_summary(
         result,
         int(year),
+        current_wins[pacific_team],
+        current_wins[central_team],
         dark_mode,
     )
 
@@ -913,6 +949,8 @@ def _render_japan_series_page() -> None:
 def _render_japan_series_summary(
     result: JapanSeriesResult,
     year: int,
+    team_a_wins: int,
+    team_b_wins: int,
     dark_mode: bool,
 ) -> None:
     team_a_name = team_label(result.team_a)
@@ -927,6 +965,10 @@ def _render_japan_series_summary(
         f"{result.team_b_probability * 100:.1f}%",
     )
     metric_cols[2].metric("計算方式", "二項分布")
+    st.caption(
+        f"現在の勝ち星: {team_a_name} {team_a_wins}勝 - "
+        f"{team_b_name} {team_b_wins}勝"
+    )
 
     tab_result, tab_schedule, tab_model = st.tabs(["予測", "日程", "前提"])
     with tab_result:
@@ -969,6 +1011,7 @@ def _render_japan_series_summary(
         st.markdown(
             f"""
 - {team_a_name}・{team_b_name}の各試合勝率は、初期値をそれぞれ5割としています。両チームが5割の場合の日本一確率は理論上50%ずつです。
+- 入力した現在の勝ち星を消化済みの結果として、残り試合の条件付き確率を計算します。
 - 4勝先取の二項分布から、代表別の日本一確率と日本一決定日確率を直接計算します。モンテカルロ試行による乱数の揺れはありません。
 - 日本一決定日は、4勝目を挙げた試合の日付です。
 - 第1・2戦、第6・7戦をセ・リーグ代表の本拠地、第3〜5戦をパ・リーグ代表の本拠地として扱います。

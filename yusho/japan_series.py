@@ -53,10 +53,14 @@ def calculate_japan_series(
     start_date: date,
     team_a_win_rate: float = 0.5,
     team_b_win_rate: float = 0.5,
+    team_a_wins: int = 0,
+    team_b_wins: int = 0,
 ) -> JapanSeriesResult:
     """Calculate best-of-seven probabilities with the binomial distribution."""
     if team_a == team_b:
         raise ValueError("代表チームは異なるチームを指定してください")
+    if not 0 <= team_a_wins <= 3 or not 0 <= team_b_wins <= 3:
+        raise ValueError("現在の勝利数は0勝から3勝まで指定してください")
 
     team_a_win_rate = _clamp_rate(team_a_win_rate)
     team_b_win_rate = _clamp_rate(team_b_win_rate)
@@ -68,20 +72,35 @@ def calculate_japan_series(
     team_date_rows: list[dict[str, object]] = []
     team_a_probability = 0.0
     team_b_probability = 0.0
+    games_played = team_a_wins + team_b_wins
+    needed_a = 4 - team_a_wins
+    needed_b = 4 - team_b_wins
     for series_length, row in enumerate(schedule.itertuples(index=False), start=1):
-        if series_length < 4:
+        if series_length <= games_played:
             continue
-        games_before_decision = series_length - 1
+        games_before_decision = series_length - games_played - 1
+        wins_needed_before_decision_a = needed_a - 1
+        wins_needed_before_decision_b = needed_b - 1
         a_probability = (
-            comb(games_before_decision, 3)
-            * game_win_probability**4
-            * game_loss_probability ** (series_length - 4)
+            _binomial_coefficient(
+                games_before_decision,
+                wins_needed_before_decision_a,
+            )
+            * game_win_probability**needed_a
+            * game_loss_probability
+            ** (games_before_decision - wins_needed_before_decision_a)
         )
         b_probability = (
-            comb(games_before_decision, 3)
-            * game_loss_probability**4
-            * game_win_probability ** (series_length - 4)
+            _binomial_coefficient(
+                games_before_decision,
+                wins_needed_before_decision_b,
+            )
+            * game_loss_probability**needed_b
+            * game_win_probability
+            ** (games_before_decision - wins_needed_before_decision_b)
         )
+        if a_probability + b_probability <= 0:
+            continue
         champion_date = pd.Timestamp(row.Date)
         date_label = f"{champion_date.month}/{champion_date.day}"
         champion_rows.append(
@@ -124,3 +143,9 @@ def calculate_japan_series(
 
 def _clamp_rate(value: float) -> float:
     return min(0.999, max(0.001, float(value)))
+
+
+def _binomial_coefficient(n: int, k: int) -> int:
+    if k < 0 or k > n:
+        return 0
+    return comb(n, k)
