@@ -20,6 +20,7 @@ from yusho.npb_client import (
     standings_as_of,
 )
 from yusho.magic import MagicScenarioAnalysis, analyze_magic_scenario
+from yusho.japan_series import JapanSeriesResult, run_japan_series_simulations
 from yusho.simulation import SimulationResult, run_simulations
 from yusho.teams import (
     CENTRAL,
@@ -89,9 +90,17 @@ def _farm_mode_from_query() -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
+def _japan_series_mode_from_query() -> bool:
+    value = str(st.query_params.get("series", "")).strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 def main() -> None:
     dark_mode = st.session_state.get("dark_mode", False)
     _apply_style(dark_mode)
+    if _japan_series_mode_from_query():
+        _render_japan_series_page()
+        return
     farm_mode = _farm_mode_from_query()
 
     with st.sidebar:
@@ -782,6 +791,266 @@ def _probability_decimal_places(simulation_count: int) -> int:
     """Show enough percentage digits to reflect the selected trial count."""
     digits = len(str(max(1, int(simulation_count))))
     return max(1, digits - 3)
+
+
+def _render_japan_series_page() -> None:
+    dark_mode = st.session_state.get("dark_mode", False)
+    with st.sidebar:
+        st.header("日本シリーズ条件")
+        year = st.number_input(
+            "年度",
+            min_value=2026,
+            max_value=2030,
+            value=2026,
+            step=1,
+            key="japan_series_year",
+        )
+        pacific_teams = list(league_teams(PACIFIC))
+        central_teams = list(league_teams(CENTRAL))
+        pacific_team = st.selectbox(
+            "パ・リーグ代表",
+            pacific_teams,
+            index=pacific_teams.index("H"),
+            format_func=team_label,
+            key="japan_series_pacific_team",
+        )
+        central_team = st.selectbox(
+            "セ・リーグ代表",
+            central_teams,
+            index=central_teams.index("T"),
+            format_func=team_label,
+            key="japan_series_central_team",
+        )
+        pacific_rate = st.number_input(
+            "パ・リーグ代表の各試合勝率",
+            min_value=0.001,
+            max_value=0.999,
+            value=0.500,
+            step=0.001,
+            format="%.3f",
+            key="japan_series_pacific_rate",
+        )
+        central_rate = st.number_input(
+            "セ・リーグ代表の各試合勝率",
+            min_value=0.001,
+            max_value=0.999,
+            value=0.500,
+            step=0.001,
+            format="%.3f",
+            key="japan_series_central_rate",
+        )
+        start_date = st.date_input(
+            "第1戦予定日",
+            value=date(int(year), 10, 24),
+            key="japan_series_start_date",
+        )
+        simulation_count = st.slider(
+            "試行回数",
+            min_value=1_000,
+            max_value=20_000,
+            value=1_000,
+            step=1_000,
+            key="japan_series_simulation_count",
+        )
+        run_clicked = st.button(
+            "シミュレーション実行",
+            type="primary",
+            use_container_width=True,
+            key="japan_series_run",
+        )
+        st.caption("両チームの勝率は初期値5割です。必要に応じて変更できます。")
+
+    _apply_style(dark_mode)
+
+    team_a_name = team_label(pacific_team)
+    team_b_name = team_label(central_team)
+    header_left, header_right = st.columns([5.5, 1])
+    with header_left:
+        st.markdown(
+            f"<h1 class='app-title'>{int(year)} 日本シリーズ優勝予測</h1>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            "<div class='app-caption'>両代表の想定勝率から、日本一決定日と代表別の優勝確率をシミュレーションします。</div>",
+            unsafe_allow_html=True,
+        )
+    with header_right:
+        st.markdown("<div class='mode-control-label'>表示</div>", unsafe_allow_html=True)
+        st.toggle("ダーク", value=dark_mode, key="dark_mode")
+
+    signature = (
+        int(year),
+        pacific_team,
+        central_team,
+        round(float(pacific_rate), 3),
+        round(float(central_rate), 3),
+        start_date.isoformat(),
+        int(simulation_count),
+    )
+    result_key = "japan_series_simulation_result"
+    try:
+        should_run = run_clicked or result_key not in st.session_state
+        if should_run:
+            with st.spinner("日本シリーズをシミュレーションしています..."):
+                result = run_japan_series_simulations(
+                    pacific_team,
+                    central_team,
+                    start_date,
+                    team_a_win_rate=float(pacific_rate),
+                    team_b_win_rate=float(central_rate),
+                    simulation_count=int(simulation_count),
+                    seed=42,
+                )
+            st.session_state[result_key] = {
+                "result": result,
+                "signature": signature,
+            }
+        stored = st.session_state[result_key]
+        result = stored["result"]
+        if stored["signature"] != signature:
+            st.warning("条件が変更されています。結果を更新するには「シミュレーション実行」を押してください。")
+    except Exception as exc:
+        st.error("日本シリーズの入力値または計算に失敗しました。")
+        st.exception(exc)
+        return
+
+    _render_japan_series_summary(
+        result,
+        int(year),
+        int(simulation_count),
+        dark_mode,
+    )
+
+
+def _render_japan_series_summary(
+    result: JapanSeriesResult,
+    year: int,
+    simulation_count: int,
+    dark_mode: bool,
+) -> None:
+    team_a_name = team_label(result.team_a)
+    team_b_name = team_label(result.team_b)
+    probability_decimals = _probability_decimal_places(simulation_count)
+    metric_cols = st.columns([1, 1, 1])
+    metric_cols[0].metric(
+        f"{team_a_name} 日本一確率",
+        f"{result.team_a_probability * 100:.{probability_decimals}f}%",
+    )
+    metric_cols[1].metric(
+        f"{team_b_name} 日本一確率",
+        f"{result.team_b_probability * 100:.{probability_decimals}f}%",
+    )
+    metric_cols[2].metric("試行回数", f"{simulation_count:,}")
+
+    tab_result, tab_schedule, tab_model = st.tabs(["予測", "日程", "前提"])
+    with tab_result:
+        left, right = st.columns([2, 1])
+        with left:
+            figure = _japan_series_date_chart(result, team_a_name, team_b_name, dark_mode)
+            chart_event = st.plotly_chart(
+                figure,
+                use_container_width=True,
+                key=f"japan_series_chart_{year}_{result.team_a}_{result.team_b}",
+                on_select="rerun",
+                selection_mode="points",
+                config={
+                    "displayModeBar": False,
+                    "scrollZoom": False,
+                    "responsive": True,
+                },
+            )
+            selection_signature = _plotly_chart_selection_signature(chart_event)
+            if selection_signature and selection_signature != st.session_state.get(
+                CHART_DIALOG_SELECTION_KEY
+            ):
+                st.session_state[CHART_DIALOG_SELECTION_KEY] = selection_signature
+                st.session_state[CHART_DIALOG_STATE_KEY] = True
+            if st.button("グラフを拡大", key="japan_series_chart_expand"):
+                st.session_state[CHART_DIALOG_STATE_KEY] = True
+            if st.session_state.get(CHART_DIALOG_STATE_KEY, False):
+                _show_champion_date_chart_dialog(figure, "japan_series_chart_dialog")
+        with right:
+            st.subheader("代表別の日本一確率")
+            _render_table(_format_japan_series_probability_table(result))
+            st.subheader("日本一決定日 上位")
+            _render_table(_format_japan_series_date_table(result))
+
+    with tab_schedule:
+        st.caption("NPB公式の開催パターンに合わせた最大7試合の日程です。4勝先取のため、シリーズは途中で終了します。")
+        _render_table(_format_japan_series_schedule(result))
+
+    with tab_model:
+        st.markdown(
+            f"""
+- {team_a_name}・{team_b_name}の各試合勝率は、初期値をそれぞれ5割としています。
+- 各試合の勝敗をシミュレーションし、先に4勝した代表を日本一とします。
+- 日本一決定日は、4勝目を挙げた試合の日付です。
+- 第1・2戦、第6・7戦をセ・リーグ代表の本拠地、第3〜5戦をパ・リーグ代表の本拠地として扱います。
+- 雨天中止、延長、先発投手、球場による勝率変動はモデルに含めていません。
+"""
+        )
+
+
+def _japan_series_date_chart(
+    result: JapanSeriesResult,
+    team_a_name: str,
+    team_b_name: str,
+    dark_mode: bool,
+) -> go.Figure:
+    frame = result.champion_dates.copy()
+    frame["ProbabilityPct"] = frame["Probability"] * 100
+    frame["ProbabilityLabel"] = frame["ProbabilityPct"].map(lambda value: f"{value:.1f}%")
+    figure = px.bar(
+        frame,
+        x="DateLabel",
+        y="ProbabilityPct",
+        text="ProbabilityLabel",
+        labels={"DateLabel": "日本一決定日", "ProbabilityPct": "確率 (%)"},
+        title=f"{team_a_name}・{team_b_name} 日本一決定日分布",
+    )
+    figure.update_traces(
+        marker_color="#facc15",
+        textposition="outside",
+        cliponaxis=False,
+        hovertemplate="%{x}<br>確率: %{y:.1f}%<extra></extra>",
+    )
+    figure.update_layout(
+        height=520,
+        margin={"l": 40, "r": 20, "t": 70, "b": 60},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#e5e7eb" if dark_mode else "#0f172a"},
+        xaxis={"type": "category", "showgrid": False},
+        yaxis={"rangemode": "tozero", "ticksuffix": "%", "gridcolor": "#334155" if dark_mode else "#dbe3ec"},
+        showlegend=False,
+    )
+    return figure
+
+
+def _format_japan_series_probability_table(result: JapanSeriesResult) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "代表": [team_label(result.team_a), team_label(result.team_b)],
+            "日本一確率": [
+                f"{result.team_a_probability * 100:.1f}%",
+                f"{result.team_b_probability * 100:.1f}%",
+            ],
+        }
+    )
+
+
+def _format_japan_series_date_table(result: JapanSeriesResult) -> pd.DataFrame:
+    frame = result.champion_dates.copy()
+    frame["日付"] = frame["Date"].map(_result_date_label)
+    frame["確率"] = frame["Probability"].map(lambda value: f"{value * 100:.1f}%")
+    return frame.sort_values("Probability", ascending=False).head(8)[["日付", "確率"]]
+
+
+def _format_japan_series_schedule(result: JapanSeriesResult) -> pd.DataFrame:
+    frame = result.series_schedule.copy()
+    frame["試合"] = frame["Game"].map(lambda value: f"第{int(value)}戦")
+    frame["日付"] = frame["Date"].map(_result_date_label)
+    return frame[["試合", "日付", "HomeSide"]].rename(columns={"HomeSide": "本拠地"})
 
 
 def _render_summary(
