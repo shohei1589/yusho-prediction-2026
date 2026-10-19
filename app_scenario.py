@@ -817,7 +817,7 @@ def _render_japan_series_page() -> None:
         central_team = st.selectbox(
             "セ・リーグ代表",
             central_teams,
-            index=central_teams.index("T"),
+            index=central_teams.index("DB"),
             format_func=team_label,
             key="japan_series_central_team",
         )
@@ -982,7 +982,7 @@ def _render_japan_series_summary(
     with tab_model:
         st.markdown(
             f"""
-- {team_a_name}・{team_b_name}の各試合勝率は、初期値をそれぞれ5割としています。
+- {team_a_name}・{team_b_name}の各試合勝率は、初期値をそれぞれ5割としています。両チームが5割の場合の理論上の日本一確率は50%ずつですが、表示値はモンテカルロ試行による推定値のため、試行回数が少ないと数ポイント揺れることがあります。
 - 各試合の勝敗をシミュレーションし、先に4勝した代表を日本一とします。
 - 日本一決定日は、4勝目を挙げた試合の日付です。
 - 第1・2戦、第6・7戦をセ・リーグ代表の本拠地、第3〜5戦をパ・リーグ代表の本拠地として扱います。
@@ -1041,7 +1041,7 @@ def _format_japan_series_probability_table(result: JapanSeriesResult) -> pd.Data
 
 def _format_japan_series_date_table(result: JapanSeriesResult) -> pd.DataFrame:
     frame = result.champion_dates.copy()
-    frame["日付"] = frame["Date"].map(_result_date_label)
+    frame["日付"] = frame["Date"].map(_japan_series_date_label)
     frame["確率"] = frame["Probability"].map(lambda value: f"{value * 100:.1f}%")
     return frame.sort_values("Probability", ascending=False).head(8)[["日付", "確率"]]
 
@@ -1049,8 +1049,15 @@ def _format_japan_series_date_table(result: JapanSeriesResult) -> pd.DataFrame:
 def _format_japan_series_schedule(result: JapanSeriesResult) -> pd.DataFrame:
     frame = result.series_schedule.copy()
     frame["試合"] = frame["Game"].map(lambda value: f"第{int(value)}戦")
-    frame["日付"] = frame["Date"].map(_result_date_label)
+    frame["日付"] = frame["Date"].map(_japan_series_date_label)
     return frame[["試合", "日付", "HomeSide"]].rename(columns={"HomeSide": "本拠地"})
+
+
+def _japan_series_date_label(value: object) -> str:
+    timestamp = pd.to_datetime(value, errors="coerce")
+    if pd.isna(timestamp):
+        return ""
+    return f"{timestamp.month}/{timestamp.day}"
 
 
 def _render_summary(
