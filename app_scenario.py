@@ -20,7 +20,7 @@ from yusho.npb_client import (
     standings_as_of,
 )
 from yusho.magic import MagicScenarioAnalysis, analyze_magic_scenario
-from yusho.japan_series import JapanSeriesResult, run_japan_series_simulations
+from yusho.japan_series import JapanSeriesResult, calculate_japan_series
 from yusho.simulation import SimulationResult, run_simulations
 from yusho.teams import (
     CENTRAL,
@@ -819,7 +819,7 @@ def _render_japan_series_page() -> None:
             central_teams,
             index=central_teams.index("DB"),
             format_func=team_label,
-            key="japan_series_central_team",
+            key="japan_series_central_team_v2",
         )
         pacific_rate = st.number_input(
             "パ・リーグ代表の各試合勝率",
@@ -844,16 +844,8 @@ def _render_japan_series_page() -> None:
             value=date(int(year), 10, 24),
             key="japan_series_start_date",
         )
-        simulation_count = st.slider(
-            "試行回数",
-            min_value=1_000,
-            max_value=20_000,
-            value=1_000,
-            step=1_000,
-            key="japan_series_simulation_count",
-        )
         run_clicked = st.button(
-            "シミュレーション実行",
+            "計算を更新",
             type="primary",
             use_container_width=True,
             key="japan_series_run",
@@ -871,7 +863,7 @@ def _render_japan_series_page() -> None:
             unsafe_allow_html=True,
         )
         st.markdown(
-            "<div class='app-caption'>両代表の想定勝率から、日本一決定日と代表別の優勝確率をシミュレーションします。</div>",
+            "<div class='app-caption'>両代表の想定勝率から、日本一決定日と代表別の優勝確率を理論計算します。</div>",
             unsafe_allow_html=True,
         )
     with header_right:
@@ -885,21 +877,18 @@ def _render_japan_series_page() -> None:
         round(float(pacific_rate), 3),
         round(float(central_rate), 3),
         start_date.isoformat(),
-        int(simulation_count),
     )
-    result_key = "japan_series_simulation_result"
+    result_key = "japan_series_exact_result"
     try:
         should_run = run_clicked or result_key not in st.session_state
         if should_run:
-            with st.spinner("日本シリーズをシミュレーションしています..."):
-                result = run_japan_series_simulations(
+            with st.spinner("日本シリーズを理論計算しています..."):
+                result = calculate_japan_series(
                     pacific_team,
                     central_team,
                     start_date,
                     team_a_win_rate=float(pacific_rate),
                     team_b_win_rate=float(central_rate),
-                    simulation_count=int(simulation_count),
-                    seed=42,
                 )
             st.session_state[result_key] = {
                 "result": result,
@@ -908,7 +897,7 @@ def _render_japan_series_page() -> None:
         stored = st.session_state[result_key]
         result = stored["result"]
         if stored["signature"] != signature:
-            st.warning("条件が変更されています。結果を更新するには「シミュレーション実行」を押してください。")
+            st.warning("条件が変更されています。結果を更新するには「計算を更新」を押してください。")
     except Exception as exc:
         st.error("日本シリーズの入力値または計算に失敗しました。")
         st.exception(exc)
@@ -917,7 +906,6 @@ def _render_japan_series_page() -> None:
     _render_japan_series_summary(
         result,
         int(year),
-        int(simulation_count),
         dark_mode,
     )
 
@@ -925,22 +913,20 @@ def _render_japan_series_page() -> None:
 def _render_japan_series_summary(
     result: JapanSeriesResult,
     year: int,
-    simulation_count: int,
     dark_mode: bool,
 ) -> None:
     team_a_name = team_label(result.team_a)
     team_b_name = team_label(result.team_b)
-    probability_decimals = _probability_decimal_places(simulation_count)
     metric_cols = st.columns([1, 1, 1])
     metric_cols[0].metric(
         f"{team_a_name} 日本一確率",
-        f"{result.team_a_probability * 100:.{probability_decimals}f}%",
+        f"{result.team_a_probability * 100:.1f}%",
     )
     metric_cols[1].metric(
         f"{team_b_name} 日本一確率",
-        f"{result.team_b_probability * 100:.{probability_decimals}f}%",
+        f"{result.team_b_probability * 100:.1f}%",
     )
-    metric_cols[2].metric("試行回数", f"{simulation_count:,}")
+    metric_cols[2].metric("計算方式", "二項分布")
 
     tab_result, tab_schedule, tab_model = st.tabs(["予測", "日程", "前提"])
     with tab_result:
@@ -982,8 +968,8 @@ def _render_japan_series_summary(
     with tab_model:
         st.markdown(
             f"""
-- {team_a_name}・{team_b_name}の各試合勝率は、初期値をそれぞれ5割としています。両チームが5割の場合の理論上の日本一確率は50%ずつですが、表示値はモンテカルロ試行による推定値のため、試行回数が少ないと数ポイント揺れることがあります。
-- 各試合の勝敗をシミュレーションし、先に4勝した代表を日本一とします。
+- {team_a_name}・{team_b_name}の各試合勝率は、初期値をそれぞれ5割としています。両チームが5割の場合の日本一確率は理論上50%ずつです。
+- 4勝先取の二項分布から、代表別の日本一確率と日本一決定日確率を直接計算します。モンテカルロ試行による乱数の揺れはありません。
 - 日本一決定日は、4勝目を挙げた試合の日付です。
 - 第1・2戦、第6・7戦をセ・リーグ代表の本拠地、第3〜5戦をパ・リーグ代表の本拠地として扱います。
 - 雨天中止、延長、先発投手、球場による勝率変動はモデルに含めていません。
