@@ -20,8 +20,10 @@ class JapanSeriesResult:
     series_schedule: pd.DataFrame
 
 
-def japan_series_schedule(start_date: date) -> pd.DataFrame:
-    """Return the seven possible Japan Series dates and official venues."""
+def japan_series_schedule(start_date: date, extra_games: int = 0) -> pd.DataFrame:
+    """Return the scheduled games plus official tie-breaker games."""
+    if not 0 <= extra_games <= 2:
+        raise ValueError("追加試合数は0試合から2試合まで指定してください")
     offsets = (0, 1, 3, 4, 5, 7, 8)
     home_teams = ("DB", "DB", "H", "H", "H", "DB", "DB")
     venues = (
@@ -42,21 +44,40 @@ def japan_series_schedule(start_date: date) -> pd.DataFrame:
         "18:30",
         "18:00",
     )
-    return pd.DataFrame(
-        [
+    rows = [
+        {
+            "Game": index,
+            "Date": pd.Timestamp(start_date + timedelta(days=offset)),
+            "HomeTeam": home_team,
+            "Venue": venue,
+            "StartTime": start_time,
+        }
+        for index, (offset, home_team, venue, start_time) in enumerate(
+            zip(offsets, home_teams, venues, start_times),
+            start=1,
+        )
+    ]
+    if extra_games >= 1:
+        rows.append(
             {
-                "Game": index,
-                "Date": pd.Timestamp(start_date + timedelta(days=offset)),
-                "HomeTeam": home_team,
-                "Venue": venue,
-                "StartTime": start_time,
+                "Game": 8,
+                "Date": pd.Timestamp(start_date + timedelta(days=9)),
+                "HomeTeam": "DB",
+                "Venue": "横浜スタジアム",
+                "StartTime": "未定",
             }
-            for index, (offset, home_team, venue, start_time) in enumerate(
-                zip(offsets, home_teams, venues, start_times),
-                start=1,
-            )
-        ]
-    )
+        )
+    if extra_games >= 2:
+        rows.append(
+            {
+                "Game": 9,
+                "Date": pd.Timestamp(start_date + timedelta(days=11)),
+                "HomeTeam": "H",
+                "Venue": "みずほPayPayドーム福岡",
+                "StartTime": "未定",
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def calculate_japan_series(
@@ -68,22 +89,25 @@ def calculate_japan_series(
     team_a_wins: int = 0,
     team_b_wins: int = 0,
     games_played: int | None = None,
+    ties: int = 0,
 ) -> JapanSeriesResult:
     """Calculate best-of-seven probabilities with the binomial distribution."""
     if team_a == team_b:
         raise ValueError("代表チームは異なるチームを指定してください")
     if not 0 <= team_a_wins <= 3 or not 0 <= team_b_wins <= 3:
         raise ValueError("現在の勝利数は0勝から3勝まで指定してください")
+    if not 0 <= ties <= 2:
+        raise ValueError("現在の引き分け数は0試合から2試合まで指定してください")
     if games_played is None:
-        games_played = team_a_wins + team_b_wins
-    if team_a_wins + team_b_wins > games_played or not 0 <= games_played <= 6:
-        raise ValueError("消化試合数は現在の勝利数以上、6試合以下で指定してください")
+        games_played = team_a_wins + team_b_wins + ties
+    if games_played != team_a_wins + team_b_wins + ties or not 0 <= games_played <= 8:
+        raise ValueError("消化試合数は勝利数と引き分け数の合計で、8試合以下で指定してください")
 
     team_a_win_rate = _clamp_rate(team_a_win_rate)
     team_b_win_rate = _clamp_rate(team_b_win_rate)
     game_win_probability = odds_ratio(team_a_win_rate, team_b_win_rate)
     game_loss_probability = 1 - game_win_probability
-    schedule = japan_series_schedule(start_date)
+    schedule = japan_series_schedule(start_date, extra_games=min(2, ties))
 
     champion_rows: list[dict[str, object]] = []
     team_date_rows: list[dict[str, object]] = []
@@ -161,14 +185,15 @@ def completed_japan_series_score(
     schedule: pd.DataFrame,
     team_a: str,
     team_b: str,
-) -> tuple[int, int, int]:
-    """Extract official final wins and completed games for the two teams."""
+) -> tuple[int, int, int, int]:
+    """Extract official final wins, completed games, and ties."""
     if schedule.empty:
-        return 0, 0, 0
+        return 0, 0, 0, 0
 
     team_a_wins = 0
     team_b_wins = 0
     games_played = 0
+    ties = 0
     for row in schedule.itertuples(index=False):
         if str(getattr(row, "Status", "")) != "final":
             continue
@@ -182,6 +207,7 @@ def completed_japan_series_score(
             continue
         games_played += 1
         if score_home == score_away:
+            ties += 1
             continue
         home_won = score_home > score_away
         winner = home_team if home_won else away_team
@@ -189,7 +215,7 @@ def completed_japan_series_score(
             team_a_wins += 1
         elif winner == team_b:
             team_b_wins += 1
-    return team_a_wins, team_b_wins, games_played
+    return team_a_wins, team_b_wins, games_played, ties
 
 
 def _clamp_rate(value: float) -> float:

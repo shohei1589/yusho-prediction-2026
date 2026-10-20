@@ -809,6 +809,10 @@ def _probability_decimal_places(simulation_count: int) -> int:
     return max(1, digits - 3)
 
 
+def _mark_japan_series_score_updated() -> None:
+    st.session_state["japan_series_score_updated"] = True
+
+
 def _render_japan_series_page() -> None:
     dark_mode = st.session_state.get("dark_mode", False)
     with st.sidebar:
@@ -898,13 +902,19 @@ def _render_japan_series_page() -> None:
     official_error = None
     official_wins = {pacific_team: 0, central_team: 0}
     official_games_played = 0
+    official_ties = 0
     try:
         official_schedule_result = _cached_japan_series_schedule(
             int(year),
             verify_ssl,
             use_env_proxy,
         )
-        official_a_wins, official_b_wins, official_games_played = (
+        (
+            official_a_wins,
+            official_b_wins,
+            official_games_played,
+            official_ties,
+        ) = (
             completed_japan_series_score(
                 official_schedule_result.frame,
                 pacific_team,
@@ -916,16 +926,24 @@ def _render_japan_series_page() -> None:
     except Exception as exc:
         official_error = exc
 
-    official_signature = (
-        int(year),
-        official_wins[pacific_team],
-        official_wins[central_team],
-        official_games_played,
-    )
-    official_changed = (
-        st.session_state.get("japan_series_official_signature")
-        != official_signature
-    )
+    if official_error is None:
+        official_signature = (
+            int(year),
+            official_wins[pacific_team],
+            official_wins[central_team],
+            official_games_played,
+            official_ties,
+        )
+        official_changed = (
+            st.session_state.get("japan_series_official_signature")
+            != official_signature
+        )
+    else:
+        official_signature = st.session_state.get(
+            "japan_series_official_signature",
+            ("unavailable", int(year)),
+        )
+        official_changed = False
     if official_changed:
         st.session_state[f"japan_series_current_wins_{pacific_team}"] = official_wins[
             pacific_team
@@ -933,6 +951,7 @@ def _render_japan_series_page() -> None:
         st.session_state[f"japan_series_current_wins_{central_team}"] = official_wins[
             central_team
         ]
+        st.session_state["japan_series_current_ties"] = official_ties
         st.session_state["japan_series_official_signature"] = official_signature
         st.session_state["japan_series_official_updated"] = True
 
@@ -941,6 +960,9 @@ def _render_japan_series_page() -> None:
         wins_key = f"japan_series_current_wins_{team}"
         st.session_state.setdefault(wins_key, official_wins[team])
         current_wins[team] = int(st.session_state[wins_key])
+    ties_key = "japan_series_current_ties"
+    st.session_state.setdefault(ties_key, official_ties)
+    current_ties = int(st.session_state[ties_key])
 
     st.markdown(
         f"""
@@ -955,6 +977,7 @@ def _render_japan_series_page() -> None:
     <strong>{'★' * current_wins[pacific_team]}{'☆' * (3 - current_wins[pacific_team])}</strong>
     <span>{team_a_name}</span>
   </div>
+  <div class="japan-series-score-ties">引き分け {current_ties}試合</div>
 </div>
 """,
         unsafe_allow_html=True,
@@ -978,12 +1001,28 @@ def _render_japan_series_page() -> None:
                     )
                     st.session_state["japan_series_score_updated"] = True
                     st.rerun()
-    st.caption("星を押すと現在の勝ち星を0〜3勝で設定できます。")
+    tie_cols = st.columns([1.55, 1.35, 1.35])
+    with tie_cols[0]:
+        st.markdown("**消化した引き分け**")
+    with tie_cols[1]:
+        st.number_input(
+            "引き分け数",
+            min_value=0,
+            max_value=2,
+            step=1,
+            key=ties_key,
+            on_change=_mark_japan_series_score_updated,
+            label_visibility="collapsed",
+        )
+    with tie_cols[2]:
+        st.caption("試合")
+    current_ties = int(st.session_state[ties_key])
+    st.caption("星は勝ち星、引き分け数はシリーズ全体で入力します。")
     if official_error is not None:
         st.warning("NPB公式結果を取得できなかったため、現在の勝ち星は手動入力を使用しています。")
     elif official_games_played:
         st.caption(
-            f"NPB公式でfinalになった{official_games_played}試合の結果を自動反映しています。"
+            f"NPB公式でfinalになった{official_games_played}試合（引き分け{official_ties}試合を含む）の結果を自動反映しています。"
         )
     else:
         st.caption("NPB公式でfinalになった日本シリーズの試合は、次回表示時に自動反映します。公式結果は5分間隔で更新されます。")
@@ -1006,10 +1045,8 @@ def _render_japan_series_page() -> None:
         start_date.isoformat(),
         current_wins[pacific_team],
         current_wins[central_team],
-        max(
-            official_games_played,
-            current_wins[pacific_team] + current_wins[central_team],
-        ),
+        current_ties,
+        current_wins[pacific_team] + current_wins[central_team] + current_ties,
     )
     # Bump the key when the schedule schema changes so an old session cannot
     # reuse a result that lacks venue/time columns.
@@ -1026,10 +1063,12 @@ def _render_japan_series_page() -> None:
                     team_b_win_rate=float(central_rate),
                     team_a_wins=current_wins[pacific_team],
                     team_b_wins=current_wins[central_team],
-                    games_played=max(
-                        official_games_played,
-                        current_wins[pacific_team] + current_wins[central_team],
+                    games_played=(
+                        current_wins[pacific_team]
+                        + current_wins[central_team]
+                        + current_ties
                     ),
+                    ties=current_ties,
                 )
             st.session_state[result_key] = {
                 "result": result,
@@ -1144,6 +1183,8 @@ def _render_japan_series_summary(
 - 入力した現在の勝ち星を消化済みの結果として、残り試合の条件付き確率を計算します。
 - 4勝先取の二項分布から、代表別の日本一確率と日本一決定日確率を直接計算します。モンテカルロ試行による乱数の揺れはありません。
 - 日本一決定日は、4勝目を挙げた試合の日付です。
+- 第7戦までの引き分けは12回で確定し、入力した引き分けは勝ち星を増やさず消化試合数として反映します。第7戦後に決着しない場合の第8・9戦の日程も表示します。
+- 各チームの勝率入力には引き分け確率が含まれないため、今後の試合は勝敗がつく前提で計算します。実際の引き分けは公式結果の自動反映、または引き分け数の入力で反映できます。
 - 第1・2戦、第6・7戦をセ・リーグ代表の本拠地、第3〜5戦をパ・リーグ代表の本拠地として扱います。
 - 雨天中止、延長、先発投手、球場による勝率変動はモデルに含めていません。
 """
@@ -1164,6 +1205,7 @@ def _japan_series_date_chart(
         frame = result.team_date_probabilities.copy()
         if not frame.empty and "Winner" in frame.columns:
             frame = frame[frame["Winner"] == focus_team].copy()
+        frame = frame[frame["Probability"] > 0].copy()
         frame["DateLabel"] = frame["Date"].map(_japan_series_date_label)
         chart_title = f"{team_label(focus_team)} 日本一決定日分布"
     frame["ProbabilityPct"] = frame["Probability"] * 100
@@ -1217,6 +1259,7 @@ def _format_japan_series_date_table(
         frame = result.team_date_probabilities.copy()
         if not frame.empty and "Winner" in frame.columns:
             frame = frame[frame["Winner"] == focus_team].copy()
+        frame = frame[frame["Probability"] > 0].copy()
     if frame.empty:
         return pd.DataFrame(columns=["日付", "確率"])
     frame["日付"] = frame["Date"].map(_japan_series_date_label)
@@ -3329,6 +3372,13 @@ def _apply_style(dark_mode: bool) -> None:
 .japan-series-score-vs {{
   color: {muted};
   font-size: 1rem;
+}}
+.japan-series-score-ties {{
+  margin-top: 0.25rem;
+  color: {muted};
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-align: center;
 }}
 .mode-control-label {{
   margin-top: 0.85rem;
