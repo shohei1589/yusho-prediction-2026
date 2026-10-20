@@ -1079,13 +1079,30 @@ def _render_japan_series_summary(
 
     tab_result, tab_schedule, tab_model = st.tabs(["予測", "日程", "前提"])
     with tab_result:
+        view_team = st.selectbox(
+            "日本一決定日の表示目線",
+            [result.team_a, result.team_b],
+            index=0,
+            format_func=team_label,
+            key=f"japan_series_view_team_{year}",
+        )
+        view_team_name = team_label(view_team)
+        st.caption(
+            f"{view_team_name}が日本一になる場合の決定日分布を表示しています。"
+        )
         left, right = st.columns([2, 1])
         with left:
-            figure = _japan_series_date_chart(result, team_a_name, team_b_name, dark_mode)
+            figure = _japan_series_date_chart(
+                result,
+                team_a_name,
+                team_b_name,
+                view_team,
+                dark_mode,
+            )
             chart_event = st.plotly_chart(
                 figure,
                 use_container_width=True,
-                key=f"japan_series_chart_{year}_{result.team_a}_{result.team_b}",
+                key=f"japan_series_chart_{year}_{result.team_a}_{result.team_b}_{view_team}",
                 on_select="rerun",
                 selection_mode="points",
                 config={
@@ -1100,15 +1117,21 @@ def _render_japan_series_summary(
             ):
                 st.session_state[CHART_DIALOG_SELECTION_KEY] = selection_signature
                 st.session_state[CHART_DIALOG_STATE_KEY] = True
-            if st.button("グラフを拡大", key="japan_series_chart_expand"):
+            if st.button(
+                "グラフを拡大",
+                key=f"japan_series_chart_expand_{view_team}",
+            ):
                 st.session_state[CHART_DIALOG_STATE_KEY] = True
             if st.session_state.get(CHART_DIALOG_STATE_KEY, False):
-                _show_champion_date_chart_dialog(figure, "japan_series_chart_dialog")
+                _show_champion_date_chart_dialog(
+                    figure,
+                    f"japan_series_chart_dialog_{view_team}",
+                )
         with right:
             st.subheader("代表別の日本一確率")
             _render_table(_format_japan_series_probability_table(result))
-            st.subheader("日本一決定日 上位")
-            _render_table(_format_japan_series_date_table(result))
+            st.subheader(f"{view_team_name}目線の日本一決定日 上位")
+            _render_table(_format_japan_series_date_table(result, view_team))
 
     with tab_schedule:
         st.caption("NPB公式の開催パターンに合わせた最大7試合の日程です。4勝先取のため、シリーズは途中で終了します。")
@@ -1131,9 +1154,18 @@ def _japan_series_date_chart(
     result: JapanSeriesResult,
     team_a_name: str,
     team_b_name: str,
+    focus_team: str | None,
     dark_mode: bool,
 ) -> go.Figure:
-    frame = result.champion_dates.copy()
+    if focus_team is None:
+        frame = result.champion_dates.copy()
+        chart_title = f"{team_a_name}・{team_b_name} 日本一決定日分布"
+    else:
+        frame = result.team_date_probabilities.copy()
+        if not frame.empty and "Winner" in frame.columns:
+            frame = frame[frame["Winner"] == focus_team].copy()
+        frame["DateLabel"] = frame["Date"].map(_japan_series_date_label)
+        chart_title = f"{team_label(focus_team)} 日本一決定日分布"
     frame["ProbabilityPct"] = frame["Probability"] * 100
     frame["ProbabilityLabel"] = frame["ProbabilityPct"].map(lambda value: f"{value:.1f}%")
     figure = px.bar(
@@ -1142,7 +1174,7 @@ def _japan_series_date_chart(
         y="ProbabilityPct",
         text="ProbabilityLabel",
         labels={"DateLabel": "日本一決定日", "ProbabilityPct": "確率 (%)"},
-        title=f"{team_a_name}・{team_b_name} 日本一決定日分布",
+        title=chart_title,
     )
     figure.update_traces(
         marker_color="#facc15",
@@ -1175,8 +1207,18 @@ def _format_japan_series_probability_table(result: JapanSeriesResult) -> pd.Data
     )
 
 
-def _format_japan_series_date_table(result: JapanSeriesResult) -> pd.DataFrame:
-    frame = result.champion_dates.copy()
+def _format_japan_series_date_table(
+    result: JapanSeriesResult,
+    focus_team: str | None = None,
+) -> pd.DataFrame:
+    if focus_team is None:
+        frame = result.champion_dates.copy()
+    else:
+        frame = result.team_date_probabilities.copy()
+        if not frame.empty and "Winner" in frame.columns:
+            frame = frame[frame["Winner"] == focus_team].copy()
+    if frame.empty:
+        return pd.DataFrame(columns=["日付", "確率"])
     frame["日付"] = frame["Date"].map(_japan_series_date_label)
     frame["確率"] = frame["Probability"].map(lambda value: f"{value * 100:.1f}%")
     return frame.sort_values("Probability", ascending=False).head(8)[["日付", "確率"]]
