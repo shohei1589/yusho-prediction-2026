@@ -1170,7 +1170,10 @@ def _render_japan_series_summary(
             st.subheader("代表別の日本一確率")
             _render_table(_format_japan_series_probability_table(result))
             st.subheader(f"{view_team_name}目線の日本一決定日 上位")
-            _render_table(_format_japan_series_date_table(result, view_team))
+            _render_table(
+                _format_japan_series_date_table(result, view_team),
+                table_class="styled-table japan-series-date-table",
+            )
 
     with tab_schedule:
         st.caption("NPB公式の開催パターンに合わせた最大7試合の日程です。4勝先取のため、シリーズは途中で終了します。")
@@ -4073,6 +4076,10 @@ div[data-testid="stDataFrame"] {{
   border-bottom: 1px solid {border};
   font-weight: 700;
 }}
+.japan-series-date-table td {{
+  font-size: 1.08rem;
+  font-weight: 900;
+}}
 .styled-table tr:last-child td {{
   border-bottom: 0;
 }}
@@ -4364,6 +4371,10 @@ button[kind="primary"] {{
   .styled-table th,
   .styled-table td {{
     padding: 0.48rem 0.55rem;
+  }}
+  .japan-series-date-table td {{
+    font-size: 1rem;
+    font-weight: 900;
   }}
   div[data-testid="stPlotlyChart"] {{
     border-radius: 6px;
