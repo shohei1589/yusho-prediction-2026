@@ -1224,6 +1224,7 @@ def _japan_series_date_chart(
     figure.update_traces(
         marker_color="#facc15",
         textposition="outside",
+        textfont={"size": 14},
         cliponaxis=False,
         hovertemplate="%{x}<br>確率: %{y:.1f}%<extra></extra>",
     )
@@ -1232,9 +1233,21 @@ def _japan_series_date_chart(
         margin={"l": 40, "r": 20, "t": 70, "b": 60},
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font={"color": "#e5e7eb" if dark_mode else "#0f172a"},
-        xaxis={"type": "category", "showgrid": False},
-        yaxis={"rangemode": "tozero", "ticksuffix": "%", "gridcolor": "#334155" if dark_mode else "#dbe3ec"},
+        font={"color": "#e5e7eb" if dark_mode else "#0f172a", "size": 14},
+        title={"font": {"size": 20}},
+        xaxis={
+            "type": "category",
+            "showgrid": False,
+            "tickfont": {"size": 13},
+            "title": {"font": {"size": 15}},
+        },
+        yaxis={
+            "rangemode": "tozero",
+            "ticksuffix": "%",
+            "gridcolor": "#334155" if dark_mode else "#dbe3ec",
+            "tickfont": {"size": 13},
+            "title": {"font": {"size": 15}},
+        },
         showlegend=False,
     )
     return figure
