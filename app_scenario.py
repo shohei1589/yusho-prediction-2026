@@ -1224,7 +1224,7 @@ def _japan_series_date_chart(
     figure.update_traces(
         marker_color="#facc15",
         textposition="outside",
-        textfont={"size": 14},
+        textfont={"family": "Arial Black, Arial, sans-serif", "size": 18},
         cliponaxis=False,
         hovertemplate="%{x}<br>確率: %{y:.1f}%<extra></extra>",
     )
@@ -1234,19 +1234,19 @@ def _japan_series_date_chart(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font={"color": "#e5e7eb" if dark_mode else "#0f172a", "size": 14},
-        title={"font": {"size": 20}},
+        title={"font": {"family": "Arial Black, Arial, sans-serif", "size": 22}},
         xaxis={
             "type": "category",
             "showgrid": False,
-            "tickfont": {"size": 13},
-            "title": {"font": {"size": 15}},
+            "tickfont": {"family": "Arial Black, Arial, sans-serif", "size": 16},
+            "title": {"font": {"family": "Arial Black, Arial, sans-serif", "size": 16}},
         },
         yaxis={
             "rangemode": "tozero",
             "ticksuffix": "%",
             "gridcolor": "#334155" if dark_mode else "#dbe3ec",
-            "tickfont": {"size": 13},
-            "title": {"font": {"size": 15}},
+            "tickfont": {"family": "Arial Black, Arial, sans-serif", "size": 14},
+            "title": {"font": {"family": "Arial Black, Arial, sans-serif", "size": 16}},
         },
         showlegend=False,
     )
