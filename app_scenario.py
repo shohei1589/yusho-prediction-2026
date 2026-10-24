@@ -24,6 +24,7 @@ from yusho.japan_series import (
     JapanSeriesResult,
     calculate_japan_series,
     completed_japan_series_score,
+    japan_series_canceled_games,
 )
 from yusho.simulation import SimulationResult, run_simulations
 from yusho.teams import (
@@ -903,6 +904,8 @@ def _render_japan_series_page() -> None:
     official_wins = {pacific_team: 0, central_team: 0}
     official_games_played = 0
     official_ties = 0
+    official_postponed_games: tuple[int, ...] = ()
+    official_start_date = date(int(year), 10, 24)
     try:
         official_schedule_result = _cached_japan_series_schedule(
             int(year),
@@ -921,6 +924,12 @@ def _render_japan_series_page() -> None:
                 central_team,
             )
         )
+        official_postponed_games = japan_series_canceled_games(
+            official_schedule_result.frame,
+            pacific_team,
+            central_team,
+            official_start_date,
+        )
         official_wins[pacific_team] = official_a_wins
         official_wins[central_team] = official_b_wins
     except Exception as exc:
@@ -933,6 +942,7 @@ def _render_japan_series_page() -> None:
             official_wins[central_team],
             official_games_played,
             official_ties,
+            official_postponed_games,
         )
         official_changed = (
             st.session_state.get("japan_series_official_signature")
@@ -942,6 +952,10 @@ def _render_japan_series_page() -> None:
         official_signature = st.session_state.get(
             "japan_series_official_signature",
             ("unavailable", int(year)),
+        )
+        official_postponed_games = st.session_state.get(
+            "japan_series_official_postponed_games",
+            (),
         )
         official_changed = False
     if official_changed:
@@ -953,6 +967,7 @@ def _render_japan_series_page() -> None:
         ]
         st.session_state["japan_series_current_ties"] = official_ties
         st.session_state["japan_series_official_signature"] = official_signature
+        st.session_state["japan_series_official_postponed_games"] = official_postponed_games
         st.session_state["japan_series_official_updated"] = True
 
     current_wins: dict[str, int] = {}
@@ -963,6 +978,14 @@ def _render_japan_series_page() -> None:
     ties_key = "japan_series_current_ties"
     st.session_state.setdefault(ties_key, official_ties)
     current_ties = int(st.session_state[ties_key])
+    if official_postponed_games:
+        postponed_labels = "、".join(
+            f"第{game_number}戦" for game_number in official_postponed_games
+        )
+        st.info(
+            f"NPB公式で中止となった{postponed_labels}を反映し、"
+            "中止試合は消化試合に数えず、以後の日程を1日ずつ順延しています。"
+        )
 
     st.markdown(
         f"""
@@ -1047,10 +1070,11 @@ def _render_japan_series_page() -> None:
         current_wins[central_team],
         current_ties,
         current_wins[pacific_team] + current_wins[central_team] + current_ties,
+        official_postponed_games,
     )
     # Bump the key when the schedule schema changes so an old session cannot
     # reuse a result that lacks venue/time columns.
-    result_key = "japan_series_exact_result_v2"
+    result_key = "japan_series_exact_result_v3"
     try:
         should_run = run_clicked or result_key not in st.session_state
         if should_run:
@@ -1069,6 +1093,7 @@ def _render_japan_series_page() -> None:
                         + current_ties
                     ),
                     ties=current_ties,
+                    postponed_games=official_postponed_games,
                 )
             st.session_state[result_key] = {
                 "result": result,
@@ -1089,6 +1114,7 @@ def _render_japan_series_page() -> None:
         current_wins[pacific_team],
         current_wins[central_team],
         dark_mode,
+        official_postponed_games,
     )
 
 
@@ -1098,6 +1124,7 @@ def _render_japan_series_summary(
     team_a_wins: int,
     team_b_wins: int,
     dark_mode: bool,
+    postponed_games: tuple[int, ...] = (),
 ) -> None:
     team_a_name = team_label(result.team_a)
     team_b_name = team_label(result.team_b)
@@ -1176,6 +1203,10 @@ def _render_japan_series_summary(
             )
 
     with tab_schedule:
+        if postponed_games:
+            st.caption(
+                "中止試合は勝敗・引き分けとしては数えず、NPB公式ルールに従って同球場で順延した日程を表示しています。"
+            )
         st.caption("NPB公式の開催パターンに合わせた最大7試合の日程です。4勝先取のため、シリーズは途中で終了します。")
         _render_table(_format_japan_series_schedule(result))
 
@@ -1189,7 +1220,7 @@ def _render_japan_series_summary(
 - 第7戦までの引き分けは12回で確定し、入力した引き分けは勝ち星を増やさず消化試合数として反映します。第7戦後に決着しない場合の第8・9戦の日程も表示します。
 - 各チームの勝率入力には引き分け確率が含まれないため、今後の試合は勝敗がつく前提で計算します。実際の引き分けは公式結果の自動反映、または引き分け数の入力で反映できます。
 - 第1・2戦、第6・7戦をセ・リーグ代表の本拠地、第3〜5戦をパ・リーグ代表の本拠地として扱います。
-- 雨天中止、延長、先発投手、球場による勝率変動はモデルに含めていません。
+- 雨天中止はNPB公式の中止行を検出します。第1・2戦は同球場で順延後に1日移動日を置いて第3戦へ、第3戦以降は同球場で順延し、中止が発生した場合は第5戦と第6戦の間の移動日を設けない公式ルールを反映します。中止試合は勝敗・引き分けに数えません。延長、先発投手、球場による勝率変動はモデルに含めていません。
 """
         )
 
@@ -1440,7 +1471,7 @@ def _render_summary(
 - 今後の想定勝率は、残り試合の勝敗確率を決めるために使います。
 - 残り試合はモンテカルロ法で多数回シミュレーションし、優勝確率と優勝確定日分布を推定します。
 - 各試合の勝敗確率は、両チームの今後想定勝率からLog5風のオッズ比で計算します。
-- 引分の発生、先発投手、球場、移動、故障者、雨天中止の追加発生はモデルに含めていません。
+- 引分の発生、先発投手、球場、移動、故障者、未発表の雨天中止の追加発生はモデルに含めていません。
 - マジック点灯は、対象球団が残りの直接対決を全敗し、それ以外の残り試合を全勝した場合の最終勝率が、各ライバル球団の残り試合全勝時の最終勝率を上回る場合と判定します。
 - マジック数は、各ライバル球団が残り試合を全勝すると仮定し、対象球団が最終勝率でそれを上回るために必要な追加勝利数の最大値です。勝率が同率の場合は直接対戦成績で判定します。
 - 勝率が同率になる場合は、残りの直接対決を対象球団の敗戦としても、公式の過去結果と入力済み結果を合算した直接対戦成績が対象球団優位であれば条件クリアと判定します。

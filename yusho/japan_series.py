@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 from math import comb
+from typing import Iterable
 
 import pandas as pd
 
@@ -20,10 +21,57 @@ class JapanSeriesResult:
     series_schedule: pd.DataFrame
 
 
-def japan_series_schedule(start_date: date, extra_games: int = 0) -> pd.DataFrame:
+def _japan_series_dates(
+    start_date: date,
+    max_game: int,
+    postponed_games: Iterable[int],
+) -> tuple[dict[int, pd.Timestamp], dict[int, pd.Timestamp]]:
+    """Build dates while applying the NPB rain-delay travel-day rules."""
+    base_offsets = (0, 1, 3, 4, 5, 7, 8, 9, 11)
+    counts = [0] * (max_game + 1)
+    for game_number in postponed_games:
+        counts[game_number] += 1
+
+    original_dates = {
+        game_number: pd.Timestamp(
+            start_date + timedelta(days=base_offsets[game_number - 1])
+        )
+        for game_number in range(1, max_game + 1)
+    }
+    actual_dates: dict[int, pd.Timestamp] = {}
+    early_postponement = any(game_number <= 5 for game_number in postponed_games)
+    for game_number in range(1, max_game + 1):
+        if game_number == 1:
+            gap = 0
+            previous_date = pd.Timestamp(start_date)
+        else:
+            previous_date = actual_dates[game_number - 1]
+            if game_number == 3:
+                gap = 2
+            elif game_number == 6:
+                gap = 1 if early_postponement else 2
+            elif game_number == 9:
+                gap = 2
+            else:
+                gap = 1
+        actual_dates[game_number] = previous_date + timedelta(
+            days=gap + counts[game_number]
+        )
+    return actual_dates, original_dates
+
+
+def japan_series_schedule(
+    start_date: date,
+    extra_games: int = 0,
+    postponed_games: Iterable[int] = (),
+) -> pd.DataFrame:
     """Return the scheduled games plus official tie-breaker games."""
     if not 0 <= extra_games <= 2:
         raise ValueError("追加試合数は0試合から2試合まで指定してください")
+    postponed_games = tuple(int(game) for game in postponed_games)
+    max_game = 7 + extra_games
+    if any(game < 1 or game > max_game for game in postponed_games):
+        raise ValueError("雨天順延の試合番号が日程の範囲外です")
     offsets = (0, 1, 3, 4, 5, 7, 8)
     home_teams = ("DB", "DB", "H", "H", "H", "DB", "DB")
     venues = (
@@ -44,15 +92,22 @@ def japan_series_schedule(start_date: date, extra_games: int = 0) -> pd.DataFram
         "18:30",
         "18:00",
     )
+    actual_dates, original_dates = _japan_series_dates(
+        start_date,
+        max_game,
+        postponed_games,
+    )
     rows = [
         {
             "Game": index,
-            "Date": pd.Timestamp(start_date + timedelta(days=offset)),
+            "Date": actual_dates[index],
+            "OriginalDate": original_dates[index],
+            "PostponedDays": (actual_dates[index] - original_dates[index]).days,
             "HomeTeam": home_team,
             "Venue": venue,
             "StartTime": start_time,
         }
-        for index, (offset, home_team, venue, start_time) in enumerate(
+        for index, (_offset, home_team, venue, start_time) in enumerate(
             zip(offsets, home_teams, venues, start_times),
             start=1,
         )
@@ -61,7 +116,9 @@ def japan_series_schedule(start_date: date, extra_games: int = 0) -> pd.DataFram
         rows.append(
             {
                 "Game": 8,
-                "Date": pd.Timestamp(start_date + timedelta(days=9)),
+                "Date": actual_dates[8],
+                "OriginalDate": original_dates[8],
+                "PostponedDays": (actual_dates[8] - original_dates[8]).days,
                 "HomeTeam": "DB",
                 "Venue": "横浜スタジアム",
                 "StartTime": "未定",
@@ -71,7 +128,9 @@ def japan_series_schedule(start_date: date, extra_games: int = 0) -> pd.DataFram
         rows.append(
             {
                 "Game": 9,
-                "Date": pd.Timestamp(start_date + timedelta(days=11)),
+                "Date": actual_dates[9],
+                "OriginalDate": original_dates[9],
+                "PostponedDays": (actual_dates[9] - original_dates[9]).days,
                 "HomeTeam": "H",
                 "Venue": "みずほPayPayドーム福岡",
                 "StartTime": "未定",
@@ -90,6 +149,7 @@ def calculate_japan_series(
     team_b_wins: int = 0,
     games_played: int | None = None,
     ties: int = 0,
+    postponed_games: Iterable[int] = (),
 ) -> JapanSeriesResult:
     """Calculate best-of-seven probabilities with the binomial distribution."""
     if team_a == team_b:
@@ -107,7 +167,11 @@ def calculate_japan_series(
     team_b_win_rate = _clamp_rate(team_b_win_rate)
     game_win_probability = odds_ratio(team_a_win_rate, team_b_win_rate)
     game_loss_probability = 1 - game_win_probability
-    schedule = japan_series_schedule(start_date, extra_games=min(2, ties))
+    schedule = japan_series_schedule(
+        start_date,
+        extra_games=min(2, ties),
+        postponed_games=postponed_games,
+    )
 
     champion_rows: list[dict[str, object]] = []
     team_date_rows: list[dict[str, object]] = []
@@ -216,6 +280,68 @@ def completed_japan_series_score(
         elif winner == team_b:
             team_b_wins += 1
     return team_a_wins, team_b_wins, games_played, ties
+
+
+def japan_series_canceled_games(
+    schedule: pd.DataFrame,
+    team_a: str,
+    team_b: str,
+    official_start_date: date,
+) -> tuple[int, ...]:
+    """Infer Japan Series game numbers from official canceled rows.
+
+    NPB publishes a canceled game as a row with the original date and later
+    publishes the postponed fixture as another row. The home-team pattern and
+    the official base dates let us associate each canceled row with a series
+    game, including repeated cancellations of the same game.
+    """
+    required_columns = {"Date", "HomeTeam", "AwayTeam", "Status"}
+    if schedule.empty or not required_columns.issubset(schedule.columns):
+        return ()
+
+    base_home_teams = ("DB", "DB", "H", "H", "H", "DB", "DB", "DB", "H")
+    canceled_games: list[int] = []
+    frame = schedule.copy()
+    frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+    frame = frame.dropna(subset=["Date"]).sort_values("Date")
+
+    for row in frame.itertuples(index=False):
+        if str(getattr(row, "Status", "")) != "canceled":
+            continue
+        if {
+            str(getattr(row, "HomeTeam", "")),
+            str(getattr(row, "AwayTeam", "")),
+        } != {team_a, team_b}:
+            continue
+
+        row_date = pd.Timestamp(getattr(row, "Date")).date()
+        row_home = str(getattr(row, "HomeTeam", ""))
+        current_dates, _ = _japan_series_dates(
+            official_start_date,
+            len(base_home_teams),
+            canceled_games,
+        )
+        candidates: list[tuple[int, date]] = []
+        for game_number, home_team in enumerate(
+            base_home_teams,
+            start=1,
+        ):
+            if home_team != row_home:
+                continue
+            expected_date = current_dates[game_number].date()
+            candidates.append((game_number, expected_date))
+
+        if not candidates:
+            continue
+        exact = [game for game in candidates if game[1] == row_date]
+        game_number = (
+            exact[0][0]
+            if exact
+            else min(candidates, key=lambda item: abs((item[1] - row_date).days))[0]
+        )
+        canceled_games.append(game_number)
+
+    return tuple(canceled_games)
 
 
 def _clamp_rate(value: float) -> float:
