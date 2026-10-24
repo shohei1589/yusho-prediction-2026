@@ -24,6 +24,7 @@ from yusho.japan_series import (
     JapanSeriesResult,
     calculate_japan_series,
     completed_japan_series_score,
+    japan_series_schedule,
     japan_series_canceled_games,
 )
 from yusho.simulation import SimulationResult, run_simulations
@@ -814,6 +815,18 @@ def _mark_japan_series_score_updated() -> None:
     st.session_state["japan_series_score_updated"] = True
 
 
+def _merge_japan_series_postponed_games(
+    official_games: tuple[int, ...],
+    manual_games: tuple[int, ...],
+) -> tuple[int, ...]:
+    """Merge manual and official cancellations without double counting them."""
+    merged: list[int] = []
+    for game_number in sorted(set(official_games) | set(manual_games)):
+        count = max(official_games.count(game_number), manual_games.count(game_number))
+        merged.extend([game_number] * count)
+    return tuple(merged)
+
+
 def _render_japan_series_page() -> None:
     dark_mode = st.session_state.get("dark_mode", False)
     with st.sidebar:
@@ -978,12 +991,49 @@ def _render_japan_series_page() -> None:
     ties_key = "japan_series_current_ties"
     st.session_state.setdefault(ties_key, official_ties)
     current_ties = int(st.session_state[ties_key])
-    if official_postponed_games:
+    manual_max_game = 7 + min(2, current_ties)
+    manual_postponed_games_list: list[int] = []
+    postponed_games = official_postponed_games
+    with st.expander("雨天中止の手動登録（公式反映前）", expanded=False):
+        st.caption(
+            "NPB公式に中止が反映される前に、各試合の予定日を確認して中止回数を入力してください。"
+        )
+        manual_columns = st.columns(2)
+        for game_number in range(1, manual_max_game + 1):
+            preview_postponed_games = _merge_japan_series_postponed_games(
+                postponed_games,
+                tuple(manual_postponed_games_list),
+            )
+            preview_schedule = japan_series_schedule(
+                start_date,
+                extra_games=2,
+                postponed_games=preview_postponed_games,
+            )
+            base_row = preview_schedule.iloc[game_number - 1]
+            base_date = pd.Timestamp(base_row["Date"])
+            base_date_label = f"{base_date.month}/{base_date.day}"
+            manual_key = f"japan_series_manual_postponed_{year}_{game_number}"
+            with manual_columns[(game_number - 1) % 2]:
+                count = st.number_input(
+                    f"第{game_number}戦（{base_date_label}予定）の中止回数",
+                    min_value=0,
+                    max_value=2,
+                    step=1,
+                    key=manual_key,
+                    on_change=_mark_japan_series_score_updated,
+                )
+            manual_postponed_games_list.extend([game_number] * int(count))
+    manual_postponed_games = tuple(manual_postponed_games_list)
+    postponed_games = _merge_japan_series_postponed_games(
+        postponed_games,
+        manual_postponed_games,
+    )
+    if postponed_games:
         postponed_labels = "、".join(
-            f"第{game_number}戦" for game_number in official_postponed_games
+            f"第{game_number}戦" for game_number in postponed_games
         )
         st.info(
-            f"NPB公式で中止となった{postponed_labels}を反映し、"
+            f"中止登録（{postponed_labels}）を反映し、"
             "中止試合は消化試合に数えず、以後の日程を1日ずつ順延しています。"
         )
 
@@ -1070,11 +1120,11 @@ def _render_japan_series_page() -> None:
         current_wins[central_team],
         current_ties,
         current_wins[pacific_team] + current_wins[central_team] + current_ties,
-        official_postponed_games,
+        postponed_games,
     )
     # Bump the key when the schedule schema changes so an old session cannot
     # reuse a result that lacks venue/time columns.
-    result_key = "japan_series_exact_result_v3"
+    result_key = "japan_series_exact_result_v4"
     try:
         should_run = run_clicked or result_key not in st.session_state
         if should_run:
@@ -1093,7 +1143,7 @@ def _render_japan_series_page() -> None:
                         + current_ties
                     ),
                     ties=current_ties,
-                    postponed_games=official_postponed_games,
+                    postponed_games=postponed_games,
                 )
             st.session_state[result_key] = {
                 "result": result,
@@ -1114,7 +1164,7 @@ def _render_japan_series_page() -> None:
         current_wins[pacific_team],
         current_wins[central_team],
         dark_mode,
-        official_postponed_games,
+        postponed_games,
     )
 
 
